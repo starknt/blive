@@ -566,6 +566,7 @@ dependencies = [
  "reqwest_client",
  "rust-embed",
  "serde",
+ "serde_json",
  "thiserror 2.0.12",
  "tracing",
  "tracing-subscriber",
@@ -2474,7 +2475,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.1.0"
-source = "git+https://github.com/longbridge/gpui-component.git#ea1f5331c89a84d5ae91e8dbb7d81b04587f874a"
+source = "git+https://github.com/longbridge/gpui-component.git?rev=61b7e54bfa0382a58ae75ed95fabdb2bf0dafc82#61b7e54bfa0382a58ae75ed95fabdb2bf0dafc82"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2541,7 +2542,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.1.0"
-source = "git+https://github.com/longbridge/gpui-component.git#ea1f5331c89a84d5ae91e8dbb7d81b04587f874a"
+source = "git+https://github.com/longbridge/gpui-component.git?rev=61b7e54bfa0382a58ae75ed95fabdb2bf0dafc82#61b7e54bfa0382a58ae75ed95fabdb2bf0dafc82"
 dependencies = [
  "proc-macro2",
  "quote",

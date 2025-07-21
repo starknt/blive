@@ -7,10 +7,11 @@ license = "MIT"
 [dependencies]
 recoder-api = { path = "../api" }
 gpui = { git = "https://github.com/zed-industries/zed.git" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component.git" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git", rev = "61b7e54bfa0382a58ae75ed95fabdb2bf0dafc82" }
 rust-embed = { version = "8" }
 anyhow = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 thiserror = { workspace = true }

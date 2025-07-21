@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod themes;
 pub mod title_bar;
 
 use gpui::{prelude::*, *};

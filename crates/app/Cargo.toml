@@ -1,0 +1,22 @@
+[package]
+name = "bilibili-live-recorder"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+recoder-api = { path = "../api" }
+gpui = { git = "https://github.com/zed-industries/zed.git" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git" }
+rust-embed = { version = "8" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+thiserror = { workspace = true }
+reqwest_client = { git = "https://github.com/zed-industries/zed.git" }
+
+[package.metadata.windows]
+subsystem = "windows"
+
+[build-dependencies]

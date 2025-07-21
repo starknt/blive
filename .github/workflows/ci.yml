@@ -1,0 +1,49 @@
+name: autofix.ci
+
+on:
+  - push
+  - pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CheckOut
+        uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: latest
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install pnpm
+        run: pnpm install
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+
+  autofix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: CheckOut
+        uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: latest
+          cache: pnpm
+      - name: Install Dependencies
+        run: pnpm install
+      - uses: autofix-ci/action@v1

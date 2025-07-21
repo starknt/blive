@@ -13,25 +13,23 @@ jobs:
     steps:
       - name: CheckOut
         uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: latest
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-      - name: Install pnpm
-        run: pnpm install
-      - name: Lint
-        run: pnpm lint
-      - name: Test
-        run: pnpm test
-      - name: Build
-        run: pnpm build
-        env:
-          NODE_OPTIONS: --max_old_space_size=4096
+          fetch-depth: 0
+      - name: Install Rust
+        run: rustup toolchain install stable --component llvm-tools-preview
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: install nextest
+        uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: Check code format
+        run: cargo fmt --all -- --check
+      - name: Check the package for errors
+        run: cargo check --all
+      - name: Lint rust sources
+        run: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
+      - name: Execute tests
+        run: cargo nextest run --all-features
 
   autofix:
     runs-on: ubuntu-latest

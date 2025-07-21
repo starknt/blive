@@ -1,6 +1,5 @@
 use anyhow::anyhow;
 use gpui::AssetSource;
-#[cfg(target_os = "macos")]
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]

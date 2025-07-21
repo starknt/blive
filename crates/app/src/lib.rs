@@ -188,7 +188,6 @@ impl Render for LiveRecorderApp {
                             .child(
                                 // 输入区域卡片
                                 div()
-                                    .bg(gpui::rgb(0xf8fafc))
                                     .rounded_lg()
                                     .p_4()
                                     .border(gpui::px(1.0))
@@ -219,7 +218,6 @@ impl Render for LiveRecorderApp {
                             .child(
                                 // 房间列表卡片
                                 div()
-                                    .bg(gpui::rgb(0xf8fafc))
                                     .rounded_lg()
                                     .p_4()
                                     .border(gpui::px(1.0))
@@ -250,7 +248,6 @@ impl Render for LiveRecorderApp {
                                                         .gap_3()
                                                         .children(state.rooms.iter().map(|room| {
                                                             div()
-                                                                .bg(gpui::white())
                                                                 .rounded_md()
                                                                 .p_3()
                                                                 .border(gpui::px(1.0))

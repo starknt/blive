@@ -4,8 +4,8 @@ pub mod title_bar;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Root,
-    button::Button,
+    Disableable, Root,
+    button::{Button, ButtonVariants},
     h_flex,
     input::{InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
     text::Text,
@@ -19,6 +19,7 @@ pub struct LiveRecorderApp {
     room_input: Entity<InputState>,
     title_bar: Entity<AppTitleBar>,
     _subscriptions: Vec<Subscription>,
+    lock: bool,
 }
 
 pub struct RoomRecorder {
@@ -81,23 +82,26 @@ impl Global for LiveRecorderAppState {}
 impl LiveRecorderApp {
     fn on_room_input_change(
         &mut self,
-        _: &Entity<InputState>,
+        this: &Entity<InputState>,
         event: &InputEvent,
-        _: &mut Window,
-        _: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        match event {
-            InputEvent::Change(text) => {
-                if let Ok(value) = text.parse::<u64>() {
-                    self.room_num = value;
-                }
-                println!("Change text: {text}");
+        if self.lock {
+            self.lock = false;
+            return;
+        }
+
+        if let InputEvent::Change(text) = event {
+            if let Ok(value) = text.parse::<u64>() {
+                self.room_num = value;
             }
-            InputEvent::PressEnter { secondary } => {
-                println!("PressEnter secondary: {secondary}");
-            }
-            InputEvent::Focus => println!("Focus"),
-            InputEvent::Blur => println!("Blur"),
+
+            this.update(cx, |input, cx| {
+                self.lock = true;
+                input.set_value(self.room_num.to_string(), window, cx);
+            });
+            println!("Change text: {text}");
         }
     }
 
@@ -151,6 +155,7 @@ impl LiveRecorderApp {
             room_input,
             title_bar,
             _subscriptions,
+            lock: false,
         }
     }
 
@@ -210,6 +215,7 @@ impl Render for LiveRecorderApp {
                                                     .child(
                                                         Button::new("添加录制")
                                                             .on_click(cx.listener(Self::add_recording))
+                                                            .disabled(self.lock)
                                                             .child(Text::String("添加录制".into()))
                                                     )
                                             )
@@ -276,8 +282,21 @@ impl Render for LiveRecorderApp {
                                                                                 )
                                                                         )
                                                                         .child(
-                                                                            Button::new("删除")
-                                                                                .child(Text::String("删除".into()))
+                                                                            v_flex()
+                                                                            .gap_3()
+                                                                            .child(
+                                                                                Button::new(room.num.to_string().into_element())
+                                                                                .label(match room.status {
+                                                                                    RoomStatus::Waiting => "开始录制".into_element(),
+                                                                                    RoomStatus::Recording => "停止录制".into_element(),
+                                                                                    RoomStatus::Error => "重新录制".into_element(),
+                                                                                })
+                                                                            )
+                                                                            .child(
+                                                                                Button::new(room.num.to_string().into_element())
+                                                                                .danger()
+                                                                                .label("删除".into_element())
+                                                                            )
                                                                         )
                                                                 )
                                                         }))

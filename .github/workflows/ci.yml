@@ -23,21 +23,21 @@ jobs:
         uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
       - name: Install xcb
-        run:
-              sudo apt update \
-              sudo apt install -y \
-                libxcb-xinerama0-dev \
-                libxcb-icccm4-dev \
-                libxcb-image0-dev \
-                libxcb-keysyms1-dev \
-                libxcb-render-util0-dev \
-                libxcb-shape0-dev \
-                libxcb-sync-dev \
-                libxcb-xfixes0-dev \
-                libxkbcommon-dev \
-                libxkbcommon-x11-dev \
-                libx11-xcb-dev \
-                pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-xinerama0-dev \
+            libxcb-icccm4-dev \
+            libxcb-image0-dev \
+            libxcb-keysyms1-dev \
+            libxcb-render-util0-dev \
+            libxcb-shape0-dev \
+            libxcb-sync-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libx11-xcb-dev \
+            pkg-config
       - name: Check code format
         run: cargo fmt --all -- --check
       - name: Check the package for errors
@@ -46,6 +46,15 @@ jobs:
         run: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
       - name: Execute tests
         run: cargo nextest run --all-features
+      - name: Install cargo-bundle
+        run: cargo install cargo-bundle
+      - name: Build & Bundle
+        run: cargo bundle --release
+      - name: Upload bundle artefact
+        uses: actions/upload-artifact@v3
+        with:
+          name: gpui-app
+          path: target/release/bundle/
 
   autofix:
     runs-on: ubuntu-latest

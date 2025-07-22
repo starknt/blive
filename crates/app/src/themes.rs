@@ -11,7 +11,7 @@ use gpui_component::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::LiveRecorderAppState;
+use crate::state::AppState;
 
 const STATE_FILE: &str = "target/state.json";
 
@@ -25,7 +25,7 @@ pub fn init(cx: &mut App) {
     let json = std::fs::read_to_string(STATE_FILE).unwrap_or_default();
     if let Ok(state) = serde_json::from_str::<State>(&json) {
         tracing::info!("apply theme: {:?}", state.theme);
-        LiveRecorderAppState::global_mut(cx).theme_name = Some(state.theme.clone());
+        AppState::global_mut(cx).theme_name = Some(state.theme.clone());
         if let Some(theme) = THEMES.get(&state.theme) {
             Theme::global_mut(cx).apply_config(theme);
         }
@@ -81,7 +81,7 @@ pub struct ThemeSwitcher {
 
 impl ThemeSwitcher {
     pub fn new(cx: &mut App) -> Self {
-        let theme_name = LiveRecorderAppState::global(cx)
+        let theme_name = AppState::global(cx)
             .theme_name
             .clone()
             .unwrap_or("default-light".into());
@@ -116,7 +116,7 @@ impl Render for ThemeSwitcher {
                 let state = State {
                     theme: theme_name.clone(),
                 };
-                LiveRecorderAppState::global_mut(cx).theme_name = Some(theme_name.clone());
+                AppState::global_mut(cx).theme_name = Some(theme_name.clone());
                 let json = serde_json::to_string_pretty(&state).unwrap();
                 std::fs::write(STATE_FILE, json).unwrap();
 

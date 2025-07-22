@@ -1,6 +1,6 @@
-use bilibili_live_recorder::{LiveRecorderApp, LiveRecorderAppState, assets::Assets};
 use gpui::{prelude::*, *};
 use gpui_component::{Root, TitleBar, theme};
+use recoder::{LiveRecoderApp, assets::Assets, state::AppState};
 use tracing_subscriber::prelude::*;
 
 actions!(menu_story, [Quit, Copy, Paste, Cut, SearchAll, ToggleCheck]);
@@ -12,7 +12,7 @@ fn main() {
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("gpui_component=trace".parse().unwrap())
                 .add_directive("reqwest_client=trace".parse().unwrap())
-                .add_directive("live_recorder=trace".parse().unwrap()),
+                .add_directive("recoder=trace".parse().unwrap()),
         )
         .init();
 
@@ -20,7 +20,6 @@ fn main() {
 
     app.run(move |cx| {
         gpui_component::init(cx);
-        LiveRecorderAppState::init(cx);
         theme::init(cx);
 
         let http_client = std::sync::Arc::new(
@@ -28,9 +27,22 @@ fn main() {
         );
         cx.set_http_client(http_client);
 
+        AppState::init(cx);
+
+        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+
         cx.on_action(|_: &Quit, cx: &mut App| {
             cx.quit();
         });
+
+        cx.on_app_quit({
+            move |cx| {
+                cx.background_executor().spawn(async move {
+                    // TODO: 保存配置
+                })
+            }
+        })
+        .detach();
 
         #[cfg(target_os = "macos")]
         cx.set_menus(vec![Menu {
@@ -66,7 +78,7 @@ fn main() {
 
             let window = cx
                 .open_window(options, |window, cx| {
-                    let root = LiveRecorderApp::view(window, cx);
+                    let root = LiveRecoderApp::view(window, cx);
 
                     cx.new(|cx| Root::new(root.into(), window, cx))
                 })
@@ -75,7 +87,6 @@ fn main() {
             window
                 .update(cx, |_, window, _| {
                     window.activate_window();
-                    // window.set_window_title(title);
                 })
                 .expect("Failed to update window");
         })

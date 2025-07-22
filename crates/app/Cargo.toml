@@ -1,23 +1,28 @@
 [package]
-name = "bilibili-live-recorder"
+name = "recoder"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
 [dependencies]
-recoder-api = { path = "../api" }
 gpui = { git = "https://github.com/zed-industries/zed.git" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component.git", rev = "61b7e54bfa0382a58ae75ed95fabdb2bf0dafc82" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git" }
 rust-embed = { version = "8" }
 anyhow = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 thiserror = { workspace = true }
 reqwest_client = { git = "https://github.com/zed-industries/zed.git" }
+bon = { version = "3.6.5" }
+futures = { version = "0.3" }
+num_enum = { version = "0.7" }
 
 [package.metadata.windows]
 subsystem = "windows"
 
 [build-dependencies]
+
+[dev-dependencies]
+tokio = { workspace = true }

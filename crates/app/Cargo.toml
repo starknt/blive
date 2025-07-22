@@ -22,7 +22,10 @@ num_enum = { version = "0.7" }
 [package.metadata.windows]
 subsystem = "windows"
 
-[build-dependencies]
+[package.metadata.bundle]
+name = "直播录制"
+identifier = "com.starknt.recoder"
+version = "0.1.0"
 
 [dev-dependencies]
 tokio = { workspace = true }

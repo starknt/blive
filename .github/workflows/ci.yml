@@ -37,6 +37,7 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             libx11-xcb-dev \
+            mold \
             pkg-config
       - name: Check code format
         run: cargo fmt --all -- --check

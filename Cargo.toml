@@ -1,23 +1,24 @@
 [package]
-name = "recoder"
+name = "blive"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed.git" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component.git" }
+gpui = { git = "https://github.com/zed-industries/zed.git", features = [] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git", features = [] }
 rust-embed = { version = "8" }
 anyhow = { version = "1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-thiserror = { version = "2" }
 reqwest_client = { git = "https://github.com/zed-industries/zed.git" }
-bon = { version = "3.6.5" }
 futures = { version = "0.3" }
 num_enum = { version = "0.7" }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
 
 [package.metadata.windows]
 subsystem = "windows"
@@ -29,3 +30,9 @@ version = "0.1.0"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = true
+codegen-units = 1

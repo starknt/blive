@@ -1,6 +1,6 @@
+use blive::{LiveRecoderApp, assets::Assets, state::AppState};
 use gpui::{prelude::*, *};
 use gpui_component::{Root, TitleBar, theme};
-use recoder::{LiveRecoderApp, assets::Assets, state::AppState};
 use tracing_subscriber::prelude::*;
 
 actions!(menu_story, [Quit, Copy, Paste, Cut, SearchAll, ToggleCheck]);
@@ -16,17 +16,16 @@ fn main() {
         )
         .init();
 
-    let app = Application::new().with_assets(Assets);
+    let http_client = std::sync::Arc::new(
+        reqwest_client::ReqwestClient::user_agent("LiveRecorder/0.1.0").unwrap(),
+    );
+    let app = Application::new()
+        .with_assets(Assets)
+        .with_http_client(http_client);
 
     app.run(move |cx| {
         gpui_component::init(cx);
         theme::init(cx);
-
-        let http_client = std::sync::Arc::new(
-            reqwest_client::ReqwestClient::user_agent("LiveRecorder/0.1.0").unwrap(),
-        );
-        cx.set_http_client(http_client);
-
         AppState::init(cx);
 
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);

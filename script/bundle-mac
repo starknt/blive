@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+build_flag="--release"
+target_dir="release"
+open_result=false
+local_arch=false
+local_only=false
+local_install=false
+bundle_name=""
+channel="dev"
+
+# This must match the team in the provisioning profile.
+IDENTITY="BLive"
+
+# Function for displaying help info
+help_info() {
+  echo "
+Usage: ${0##*/} [options] [bundle_name]
+Build the application bundle for macOS.
+
+Options:
+  -d    Compile in debug mode
+  -l    Compile for local architecture only.
+  -o    Open dir with the resulting DMG or launch the app itself in local mode.
+  -i    Install the resulting DMG into /Applications in local mode. Noop without -l.
+  -h    Display this help and exit.
+  "
+}
+
+while getopts 'dloih' flag
+do
+    case "${flag}" in
+        o) open_result=true;;
+        d)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
+            build_flag="";
+            target_dir="debug"
+            ;;
+        l)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
+            local_arch=true
+            local_only=true
+            ;;
+        i) local_install=true;;
+        h)
+           help_info
+           exit 0
+           ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+if [[ $# -gt 0 ]]; then
+    if [ "$1" ]; then
+        bundle_name=$1
+    fi
+fi
+
+# Get release channel
+# pushd ./
+# channel=$(<RELEASE_CHANNEL)
+# export RELEASE_CHANNEL="${channel}"
+# popd
+
+export BUNDLE=true
+
+cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
+if [ "$cargo_bundle_version" != "cargo-bundle v0.6.1-zed" ]; then
+    cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+fi
+
+# Deal with versions of macOS that don't include libstdc++ headers
+export CXXFLAGS="-stdlib=libc++"
+
+version_info=$(rustc --version --verbose)
+host_line=$(echo "$version_info" | grep host)
+local_target_triple=${host_line#*: }
+
+# Generate the licenses first, so they can be baked into the binaries
+# script/generate-licenses
+
+if [ "$local_arch" = true ]; then
+    echo "Building for local target only."
+    cargo build ${build_flag}
+else
+    echo "Compiling BLive binaries"
+    cargo build ${build_flag} --target aarch64-apple-darwin --target x86_64-apple-darwin
+fi
+
+echo "Creating application bundle"
+pushd ./
+cp Cargo.toml Cargo.toml.backup
+sed \
+    -i.backup \
+    "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
+    Cargo.toml
+
+if [ "$local_arch" = true ]; then
+    app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
+else
+    app_path_x64=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
+    app_path_aarch64=$(cargo bundle ${build_flag} --target aarch64-apple-darwin --select-workspace-root | xargs)
+    app_path=$app_path_x64
+fi
+
+mv Cargo.toml.backup Cargo.toml
+popd
+echo "Bundled ${app_path}"
+
+function download_and_unpack() {
+    local url=$1
+    local path_to_unpack=$2
+    local target_path=$3
+
+    temp_dir=$(mktemp -d)
+
+    if ! command -v curl &> /dev/null; then
+        echo "curl is not installed. Please install curl to continue."
+        exit 1
+    fi
+
+    curl --silent --fail --location "$url" | tar -xvz -C "$temp_dir" -f - $path_to_unpack
+
+    mv "$temp_dir/$path_to_unpack" "$target_path"
+
+    rm -rf "$temp_dir"
+}
+
+function prepare_binaries() {
+    local architecture=$1
+    local app_path=$2
+
+    echo "Unpacking dSYMs for $architecture"
+    exe_path="target/${architecture}/${target_dir}/BLive"
+    if ! dsymutil --flat "${exe_path}" 2> target/dsymutil.log; then
+        echo "dsymutil failed"
+        cat target/dsymutil.log
+        exit 1
+    fi
+    version="$(cargo metadata --no-deps --manifest-path Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "BLive"))[0].version')"
+    if [ "$channel" == "nightly" ]; then
+        version="$version-$(git rev-parse --short HEAD)"
+    fi
+
+    cp target/${architecture}/${target_dir}/BLive "${app_path}/Contents/MacOS/BLive"
+}
+
+function sign_app_binaries() {
+    local app_path=$1
+    local architecture=$2
+    local architecture_dir=$3
+    rm -rf "${app_path}/Contents/Frameworks"
+    mkdir -p "${app_path}/Contents/Frameworks"
+
+    # Note: The app identifier for our development builds is the same as the app identifier for nightly.
+    # cp contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
+
+    echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_KEY, APPLE_NOTARIZATION_KEY_ID, APPLE_NOTARIZATION_ISSUER_ID"
+    if [[ "$local_only" = false ]]; then
+        echo "To create a self-signed local build use ./scripts/build.sh -ldf"
+        exit 1
+    fi
+
+    echo "====== WARNING ======"
+    echo "This bundle is being signed without all entitlements, some features (e.g. universal links) will not work"
+    echo "====== WARNING ======"
+
+    # cat resources/BLive.entitlements | sed '/com.apple.developer.associated-domains/,+1d' > "${app_path}/Contents/Resources/BLive.entitlements"
+
+    if [[ "$target_dir" = "debug" && "$local_only" = false ]]; then
+        if [ "$open_result" = true ]; then
+            open "$app_path"
+        else
+            echo "Created application bundle:"
+            echo "$app_path"
+        fi
+        exit 0
+    fi
+
+    # If bundle_name is not set or empty, use the basename of $app_path
+    if [ -z "$bundle_name" ]; then
+        bundle_name=$(basename "$app_path")
+    else
+        # If bundle_name doesn't end in .app, append it
+        if [[ "$bundle_name" != *.app ]]; then
+            bundle_name="$bundle_name.app"
+        fi
+    fi
+
+    if [ "$local_only" = true ]; then
+        if [ "$local_install" = true ]; then
+            rm -rf "/Applications/$bundle_name"
+            mv "$app_path" "/Applications/$bundle_name"
+            echo "Installed application bundle: /Applications/$bundle_name"
+            if [ "$open_result" = true ]; then
+                echo "Opening /Applications/$bundle_name"
+                open "/Applications/$bundle_name"
+            fi
+        else
+            if [ "$open_result" = true ]; then
+                echo "Opening $app_path"
+                open "$app_path"
+            fi
+        fi
+    else
+        dmg_target_directory="target/${architecture_dir}/${target_dir}"
+        dmg_source_directory="${dmg_target_directory}/dmg"
+        dmg_file_path="${dmg_target_directory}/BLive.dmg"
+        xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
+
+        rm -rf ${dmg_source_directory}
+        mkdir -p ${dmg_source_directory}
+        mv "${app_path}" "${dmg_source_directory}"
+
+        echo "Adding symlink to /Applications to ${dmg_source_directory}"
+        ln -s /Applications ${dmg_source_directory}
+
+        echo "Creating final DMG at ${dmg_file_path} using ${dmg_source_directory}"
+        hdiutil create -volname BLive -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+
+        # If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
+        # This symlink causes CPU issues with BLive if the BLive codebase is the project being worked on, so we simply remove it for now.
+        echo "Removing symlink to /Applications from ${dmg_source_directory}"
+        rm ${dmg_source_directory}/Applications
+
+        echo "Adding license agreement to DMG"
+        npm install --global dmg-license minimist
+        dmg-license script/terms/terms.json "${dmg_file_path}"
+
+        if [ "$open_result" = true ]; then
+            open $dmg_target_directory
+        fi
+    fi
+}
+
+if [ "$local_arch" = true ]; then
+    sign_app_binaries "$app_path" "$local_target_triple" "$local_target_triple"
+else
+    # Create universal binary
+    prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
+    prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
+
+    sign_app_binaries "$app_path_x64" "x86_64-apple-darwin" "x86_64-apple-darwin"
+    sign_app_binaries "$app_path_aarch64" "aarch64-apple-darwin" "aarch64-apple-darwin"
+fi

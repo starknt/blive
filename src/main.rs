@@ -4,7 +4,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{Root, TitleBar, theme};
 use tracing_subscriber::prelude::*;
 
-actions!(menu_story, [Quit, Copy, Paste, Cut, SearchAll, ToggleCheck]);
+actions!(menu, [Quit]);
 
 fn main() {
     tracing_subscriber::registry()

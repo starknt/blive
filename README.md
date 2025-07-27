@@ -166,6 +166,10 @@ cargo nextest run --all-features
 - [reqwest](https://github.com/seanmonstar/reqwest) - HTTP 客户端
 - [serde](https://github.com/serde-rs/serde) - 序列化框架
 
+## 🌟 项目统计
+
+[![Star History Chart](https://api.star-history.com/svg?repos=starknt/bilibili-recoder&type=Date)](https://star-history.com/#starknt/bilibili-recoder&Date)
+
 ---
 
 **注意**: 本项目仅供学习和个人使用，请遵守 Bilibili 的服务条款和相关法律法规。

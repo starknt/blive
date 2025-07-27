@@ -37,6 +37,7 @@ static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
 });
 
 static DEFAULT_RECORD_DIR: OnceLock<String> = OnceLock::new();
+const DEFAULT_THEME: &str = "Catppuccin Mocha";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum RecordQuality {
@@ -148,7 +149,7 @@ impl Default for GlobalSettings {
             quality: RecordQuality::Original,
             format: "flv".to_string(),
             record_dir: record_dir.to_owned(),
-            theme_name: "default-light".into(),
+            theme_name: DEFAULT_THEME.into(),
             rooms: vec![],
         }
     }

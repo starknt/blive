@@ -1,6 +1,7 @@
 use gpui::{ClickEvent, Entity, MouseButton, Subscription, Window, div, prelude::*};
 use gpui_component::{
-    ActiveTheme, IconName, Sizable, Theme, ThemeMode, TitleBar,
+    ActiveTheme, ContextModal, IconName, Sizable, Theme, ThemeMode, TitleBar,
+    badge::Badge,
     button::{Button, ButtonVariants},
     scroll::ScrollbarShow,
 };
@@ -44,7 +45,9 @@ impl AppTitleBar {
 }
 
 impl Render for AppTitleBar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let notifications_count = window.notifications(cx).len();
+
         TitleBar::new()
             .child(
                 div()
@@ -74,6 +77,17 @@ impl Render for AppTitleBar {
                             .small()
                             .ghost()
                             .on_click(cx.listener(Self::change_color_mode)),
+                    )
+                    .child(
+                        div().relative().child(
+                            Badge::new().count(notifications_count).max(99).child(
+                                Button::new("bell")
+                                    .small()
+                                    .ghost()
+                                    .compact()
+                                    .icon(IconName::Bell),
+                            ),
+                        ),
                     ),
             )
     }

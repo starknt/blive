@@ -113,8 +113,8 @@ impl LiveRecoderApp {
         }
     }
 
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let title_bar = cx.new(|cx| AppTitleBar::new("Live Recorder".into(), window, cx));
+    fn new(title: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let title_bar = cx.new(|cx| AppTitleBar::new(title, window, cx));
         let room_num = 1804892069;
         let room_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -136,8 +136,8 @@ impl LiveRecoderApp {
         }
     }
 
-    pub fn view(window: &mut Window, cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| Self::new(window, cx))
+    pub fn view(title: String, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| Self::new(title, window, cx))
     }
 
     fn add_recording(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {

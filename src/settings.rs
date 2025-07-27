@@ -11,51 +11,48 @@ use gpui_component::{
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::Path, sync::LazyLock};
 
+pub const APP_NAME: &str = "blive";
+pub const DISPLAY_NAME: &str = "B站录播姬";
+
 static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
         "target/settings.json".to_string()
-    } else if let Some(project_dirs) = ProjectDirs::from_path("blive".into()) {
+    } else if let Some(project_dirs) = ProjectDirs::from_path(APP_NAME.into()) {
         project_dirs
             .config_dir()
             .join("settings.json")
             .to_string_lossy()
             .to_string()
+    } else if cfg!(target_os = "windows") {
+        std::env::home_dir()
+            .unwrap()
+            .join(format!("AppData/Local/{APP_NAME}/settings.json"))
+            .to_string_lossy()
+            .to_string()
     } else {
-        // 1. 如果是 debug 模式，则从 target/settings.json 读取
-        // 2. 如果是 release 模式，则从 settings.json 读取，在windows下，从 C:\Users\Administrator\AppData\Local\LiveRecoder\settings.json 读取，在mac下，从.config/LiveRecoder/settings.json 读取
-        if cfg!(target_os = "windows") {
-            std::env::home_dir()
-                .unwrap()
-                .join("AppData/Local/blive/settings.json")
-                .to_string_lossy()
-                .to_string()
-        } else {
-            std::env::home_dir()
-                .unwrap()
-                .join(".config/blive/settings.json")
-                .to_string_lossy()
-                .to_string()
-        }
+        std::env::home_dir()
+            .unwrap()
+            .join(format!(".config/{APP_NAME}/settings.json"))
+            .to_string_lossy()
+            .to_string()
     }
 });
 
 static DEFAULT_RECORD_DIR: LazyLock<String> = LazyLock::new(|| {
+    let default = std::env::home_dir()
+        .unwrap()
+        .join(format!("Movies/{APP_NAME}"))
+        .to_string_lossy()
+        .to_string();
+
     if let Some(user_dirs) = directories::UserDirs::new() {
         if let Some(movies_dir) = user_dirs.video_dir() {
-            movies_dir.join("blive").to_string_lossy().to_string()
+            movies_dir.join(APP_NAME).to_string_lossy().to_string()
         } else {
-            std::env::home_dir()
-                .unwrap()
-                .join("Movies/blive")
-                .to_string_lossy()
-                .to_string()
+            default
         }
     } else {
-        std::env::home_dir()
-            .unwrap()
-            .join("Movies/blive")
-            .to_string_lossy()
-            .to_string()
+        default
     }
 });
 

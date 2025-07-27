@@ -1,4 +1,4 @@
-use anyhow::Ok;
+use blive::settings::{APP_NAME, DISPLAY_NAME};
 use blive::{LiveRecoderApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
 use gpui::{prelude::*, *};
 use gpui_component::{Root, TitleBar, theme};
@@ -18,12 +18,13 @@ fn main() {
         .init();
 
     let app = Application::new().with_assets(Assets);
+    let version = env!("CARGO_PKG_VERSION");
 
     app.run(move |cx| {
         gpui_component::init(cx);
 
         let http_client = std::sync::Arc::new(
-            reqwest_client::ReqwestClient::user_agent("LiveRecorder/0.1.0").unwrap(),
+            reqwest_client::ReqwestClient::user_agent(&format!("{APP_NAME}/{version}")).unwrap(),
         );
         cx.set_http_client(http_client);
 
@@ -49,7 +50,7 @@ fn main() {
 
         #[cfg(target_os = "macos")]
         cx.set_menus(vec![Menu {
-            name: "LiveRecorder".into(),
+            name: APP_NAME.into(),
             items: vec![MenuItem::action("退出", Quit)],
         }]);
 
@@ -81,7 +82,7 @@ fn main() {
 
             let window = cx
                 .open_window(options, |window, cx| {
-                    let root = LiveRecoderApp::view(window, cx);
+                    let root = LiveRecoderApp::view(DISPLAY_NAME.into(), window, cx);
 
                     cx.new(|cx| Root::new(root.into(), window, cx))
                 })

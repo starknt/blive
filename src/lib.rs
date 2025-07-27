@@ -1,18 +1,20 @@
 pub mod api;
 pub mod assets;
 pub mod components;
+pub mod settings;
 pub mod state;
 pub mod themes;
 pub mod title_bar;
 
 use std::sync::Arc;
 
+use futures_util::join;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Disableable, Root,
-    button::Button,
+    ActiveTheme as _, Disableable, Root,
+    button::{Button, ButtonVariants},
     h_flex,
-    input::{InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
+    input::{InputEvent, InputState, NumberInputEvent, StepAction, TextInput},
     text::Text,
     v_flex,
 };
@@ -85,7 +87,7 @@ impl LiveRecoderApp {
 impl LiveRecoderApp {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let title_bar = cx.new(|cx| AppTitleBar::new("Live Recorder".into(), window, cx));
-        let room_num = 0;
+        let room_num = 1804892069;
         let room_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("请输入直播间房间号")
@@ -110,30 +112,45 @@ impl LiveRecoderApp {
         cx.new(|cx| Self::new(window, cx))
     }
 
-    fn add_recording(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn add_recording(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if self.room_num > 0 {
-            let client = Arc::clone(&AppState::global_mut(cx).client);
+            let client = Arc::clone(&AppState::global(cx).client);
             let room_num = self.room_num;
 
+            // 检查是否已经存在
+            if AppState::global(cx)
+                .settings
+                .rooms
+                .iter()
+                .any(|room| room.room_id == room_num)
+            {
+                return;
+            }
+
             cx.spawn(async move |_, cx| {
-                if let Ok(data) = client.get_live_room_info(room_num).await {
-                    let _ = cx.update_global(|state: &mut AppState, _| {
-                        state.rooms.push(data);
-                    });
+                let (room_data, user_data) = join!(
+                    client.get_live_room_info(room_num),
+                    client.get_live_room_user_info(room_num)
+                );
+                if let Ok(room_data) = room_data
+                    && let Ok(user_data) = user_data
+                {
+                    cx.update_global(|state: &mut AppState, cx| {
+                        let room = RoomCard::view(room_data, user_data.info, cx, client);
+
+                        state.room_entities.push(room);
+                    })
+                    .unwrap();
                 };
             })
             .detach();
-
-            self.room_num = 0;
-            self.room_input.update(cx, |input, cx| {
-                input.set_value(self.room_num.to_string(), window, cx);
-            });
         }
     }
 }
 
 impl Render for LiveRecoderApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let modal_layer = Root::render_modal_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
         let state = AppState::global(cx);
 
@@ -153,17 +170,18 @@ impl Render for LiveRecoderApp {
                                     .rounded_lg()
                                     .p_4()
                                     .border(gpui::px(1.0))
-                                    .border_color(gpui::rgb(0xe2e8f0))
+                                    .border_color(cx.theme().border)
                                     .child(
                                         v_flex()
                                             .gap_4()
                                             .child(Text::String("添加录制房间".into()))
                                             .child(
                                                 h_flex()
+                                                    .max_w_128()
                                                     .gap_3()
                                                     .items_center()
                                                     .child(
-                                                        div().flex_1().child(NumberInput::new(
+                                                        div().flex_1().child(TextInput::new(
                                                             &self.room_input,
                                                         )),
                                                     )
@@ -172,6 +190,7 @@ impl Render for LiveRecoderApp {
                                                             .on_click(
                                                                 cx.listener(Self::add_recording),
                                                             )
+                                                            .primary()
                                                             .disabled(self.lock)
                                                             .child(Text::String("添加录制".into())),
                                                     ),
@@ -184,7 +203,7 @@ impl Render for LiveRecoderApp {
                                     .rounded_lg()
                                     .p_4()
                                     .border(gpui::px(1.0))
-                                    .border_color(gpui::rgb(0xe2e8f0))
+                                    .border_color(cx.theme().border)
                                     .child(
                                         v_flex()
                                             .gap_4()
@@ -194,21 +213,32 @@ impl Render for LiveRecoderApp {
                                                     .items_center()
                                                     .child(Text::String("录制房间列表".into()))
                                                     .child(Text::String(
-                                                        format!("共 {} 个房间", state.rooms.len())
-                                                            .into(),
+                                                        format!(
+                                                            "共 {} 个房间",
+                                                            state.room_entities.len()
+                                                        )
+                                                        .into(),
                                                     )),
                                             )
-                                            .child(v_flex().gap_3().children({
-                                                let rooms: Vec<_> = state.rooms.to_vec();
-                                                rooms
-                                                    .into_iter()
-                                                    .map(|room| cx.new(|_| RoomCard::new(room)))
-                                                    .collect::<Vec<_>>()
-                                            })),
+                                            .child({
+                                                if !state.room_entities.is_empty() {
+                                                    v_flex()
+                                                        .gap_3()
+                                                        .children(state.room_entities.to_vec())
+                                                } else {
+                                                    div()
+                                                        .p_8()
+                                                        .flex_1()
+                                                        .justify_center()
+                                                        .items_center()
+                                                        .child(Text::String("暂无录制房间".into()))
+                                                }
+                                            }),
                                     ),
                             ),
                     )
-                    .child(div().absolute().top_8().children(notification_layer)),
+                    .child(div().absolute().top_8().children(notification_layer))
+                    .children(modal_layer),
             ),
         )
     }

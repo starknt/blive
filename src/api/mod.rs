@@ -1,7 +1,8 @@
 use anyhow::Context;
 use anyhow::Result;
-use futures::AsyncReadExt;
+use futures_util::AsyncReadExt;
 use gpui::http_client::{AsyncBody, HttpClient, Method, Request};
+use std::fmt::Debug;
 use std::sync::Arc;
 
 pub mod room;
@@ -15,12 +16,12 @@ pub struct BasicResponse<Data: Sized> {
 }
 
 pub struct ApiClient {
-    client: Arc<dyn HttpClient>,
+    inner: Arc<dyn HttpClient>,
 }
 
 impl ApiClient {
     pub fn new(client: Arc<dyn HttpClient>) -> Self {
-        Self { client }
+        Self { inner: client }
     }
 
     pub async fn get_live_room_info(&self, room_id: u64) -> Result<room::LiveRoomInfoData> {
@@ -33,7 +34,7 @@ impl ApiClient {
             .context("Failed to build request")?;
 
         let mut response = self
-            .client
+            .inner
             .send(request)
             .await
             .context("Failed to send request")?;
@@ -65,7 +66,7 @@ impl ApiClient {
             .context("Failed to build request")?;
 
         let mut response = self
-            .client
+            .inner
             .send(request)
             .await
             .context("Failed to send request")?;
@@ -94,7 +95,7 @@ impl ApiClient {
             .context("Failed to build request")?;
 
         let mut response = self
-            .client
+            .inner
             .send(request)
             .await
             .context("Failed to send request")?;
@@ -109,6 +110,20 @@ impl ApiClient {
         let data: BasicResponse<user::LiveUserData> = serde_json::from_str(&body)?;
 
         Ok(data.data)
+    }
+}
+
+impl Clone for ApiClient {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl Debug for ApiClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ApiClient")
     }
 }
 

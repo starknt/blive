@@ -5,11 +5,12 @@ use gpui_component::{
     scroll::ScrollbarShow,
 };
 
-use crate::themes::ThemeSwitcher;
+use crate::{settings::AppSettings, themes::ThemeSwitcher};
 
 pub struct AppTitleBar {
     title: String,
     theme_switcher: Entity<ThemeSwitcher>,
+    settings: Entity<AppSettings>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -22,10 +23,12 @@ impl AppTitleBar {
         }
 
         let theme_switcher = cx.new(|cx| ThemeSwitcher::new(cx));
+        let settings = cx.new(|cx| AppSettings::new(cx));
 
         Self {
             title,
             theme_switcher,
+            settings,
             _subscriptions: vec![],
         }
     }
@@ -57,6 +60,7 @@ impl Render for AppTitleBar {
                     .px_2()
                     .gap_2()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(self.settings.clone())
                     .child(self.theme_switcher.clone())
                     .child(
                         Button::new("theme-mode")

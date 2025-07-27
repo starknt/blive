@@ -14,18 +14,19 @@ serde_json = { version = "1" }
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest_client = { git = "https://github.com/zed-industries/zed.git" }
-futures = { version = "0.3" }
+futures-util = { version = "0.3" }
 num_enum = { version = "0.7" }
+leon = "3.0.2"
+rfd = "0.15.4"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10.4"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
 
-[package.metadata.windows]
-subsystem = "windows"
-
 [package.metadata.bundle]
 name = "直播录制"
-identifier = "com.starknt.recoder"
+identifier = "com.starknt.blive"
 version = "0.1.0"
 
 [dev-dependencies]
@@ -36,3 +37,4 @@ opt-level = 3
 strip = true
 lto = true
 codegen-units = 1
+panic = "abort"

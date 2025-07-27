@@ -1,15 +1,12 @@
-use gpui::{App, Global, SharedString};
-use serde::Serialize;
+use gpui::{App, Entity, Global};
 use std::sync::Arc;
 
-use crate::api::{ApiClient, room::LiveRoomInfoData};
+use crate::{api::ApiClient, components::RoomCard, settings::GlobalSettings};
 
-#[derive(Serialize)]
 pub struct AppState {
-    #[serde(skip)]
     pub client: Arc<ApiClient>,
-    pub rooms: Vec<LiveRoomInfoData>,
-    pub theme_name: Option<SharedString>,
+    pub room_entities: Vec<Entity<RoomCard>>,
+    pub settings: GlobalSettings,
 }
 
 impl AppState {
@@ -17,8 +14,8 @@ impl AppState {
         let client = Arc::new(ApiClient::new(cx.http_client()));
         let state = Self {
             client,
-            rooms: vec![],
-            theme_name: None,
+            room_entities: vec![],
+            settings: GlobalSettings::load(),
         };
         cx.set_global::<AppState>(state);
     }

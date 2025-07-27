@@ -2,22 +2,22 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct LiveUserData {
-    info: LiveUserInfo,
-    level: LiveUserLevel,
-    san: i32,
+    pub info: LiveUserInfo,
+    pub level: LiveUserLevel,
+    pub san: i32,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct LiveUserInfo {
-    uid: u64,
-    uname: String,
-    face: String,
-    rank: String,
-    platform_user_level: u8,
-    mobile_verify: i8,
-    identification: i8,
-    vip_type: i8,
-    gender: i8,
+    pub uid: u64,
+    pub uname: String,
+    pub face: String,
+    pub rank: String,
+    pub platform_user_level: u8,
+    pub mobile_verify: i8,
+    pub identification: i8,
+    pub vip_type: i8,
+    pub gender: i8,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

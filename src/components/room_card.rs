@@ -1,53 +1,294 @@
-use gpui::{prelude::*, *};
-use gpui_component::{
-    button::{Button, ButtonVariants},
-    text::Text,
+use crate::{
+    api::{
+        ApiClient,
+        room::{LiveRoomInfoData, LiveStatus},
+        user::LiveUserInfo,
+    },
+    settings::RoomSettings,
+    state::AppState,
+};
+use chrono::NaiveDateTime;
+use chrono_tz::Asia::Shanghai;
+use futures_util::AsyncReadExt;
+use gpui::{
+    http_client::{AsyncBody, Method, Request},
+    prelude::*,
     *,
 };
+use gpui_component::{
+    button::{Button, ButtonVariants},
+    text::{Text, TextView},
+    *,
+};
+use leon::Values;
+use std::{borrow::Cow, io::Write};
+use std::{fs::File, sync::Arc, time::Duration};
 
-use crate::api::room::{LiveRoomInfoData, LiveStatus};
-
-// #[derive(Clone)]
-// pub enum RoomCardEvent {}
-
-// #[derive(Clone, PartialEq, Debug)]
-// pub enum RoomStatus {
-//     Waiting,
-//     Recording,
-//     Error,
-// }
-
-pub struct RoomCard {
-    pub(super) room: u64,
-    pub(super) title: String,
-    pub(super) description: String,
-    pub(super) cover_url: String,
-    pub(super) live_status: LiveStatus,
-    pub(super) online_count: u32,
-    pub(super) area_name: String,
+#[derive(Clone, Debug)]
+pub enum RoomCardEvent {
+    LiveStatusChanged(LiveStatus),
+    StatusChanged(RoomCardStatus),
 }
 
-impl RoomCard {
-    pub fn new(room: LiveRoomInfoData) -> Self {
-        Self {
-            room: room.room_id,
-            title: room.title,
-            description: room.description,
-            cover_url: room.user_cover,
-            live_status: room.live_status,
-            online_count: room.online,
-            area_name: room.area_name,
+#[derive(Clone, PartialEq, Eq, Debug, Copy)]
+pub enum RoomCardStatus {
+    Waiting,
+    Recording,
+    Error,
+}
+
+struct RoomCardValues {
+    pub up_name: String,
+    pub room_id: u64,
+    pub datetime: String,
+}
+
+impl Values for RoomCardValues {
+    fn get_value(&self, key: &str) -> Option<Cow<'_, str>> {
+        match key {
+            "up_name" => Some(Cow::Borrowed(&self.up_name)),
+            "room_id" => Some(Cow::Owned(self.room_id.to_string())),
+            "datetime" => Some(Cow::Borrowed(&self.datetime)),
+            _ => None,
         }
     }
 }
 
+pub struct RoomCard {
+    pub(crate) _tasks: Vec<Task<()>>,
+    pub(crate) _record_task: Option<Task<anyhow::Result<()>>>,
+    pub(crate) status: RoomCardStatus,
+    pub(crate) room_info: LiveRoomInfoData,
+    pub(crate) user_info: LiveUserInfo,
+    pub(crate) settings: RoomSettings,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl RoomCard {
+    fn new(
+        room: LiveRoomInfoData,
+        user: LiveUserInfo,
+        settings: RoomSettings,
+        task: Task<()>,
+    ) -> Self {
+        Self {
+            _tasks: vec![task],
+            _subscriptions: vec![],
+            status: match room.live_status {
+                LiveStatus::Live => RoomCardStatus::Recording,
+                _ => RoomCardStatus::Waiting,
+            },
+            room_info: room,
+            user_info: user,
+            _record_task: None,
+            settings,
+        }
+    }
+
+    pub fn view(
+        room: LiveRoomInfoData,
+        user: LiveUserInfo,
+        cx: &mut App,
+        client: Arc<ApiClient>,
+    ) -> Entity<Self> {
+        let live_status = room.live_status;
+        let card = cx.new(|cx| {
+            let room_id = room.room_id;
+            let client = Arc::clone(&client);
+            let task = cx.spawn(async move |this: WeakEntity<RoomCard>, cx| {
+                while let Some(this) = this.upgrade() {
+                    let room_info = client.get_live_room_info(room_id).await;
+
+                    if let Ok(room_info) = room_info {
+                        let _ = this.update(cx, |this, cx| {
+                            if this.room_info.live_status != room_info.live_status {
+                                cx.emit(RoomCardEvent::LiveStatusChanged(room_info.live_status));
+                            }
+                            this.room_info = room_info.clone();
+                            cx.notify();
+                        });
+                    }
+
+                    cx.background_executor()
+                        .timer(Duration::from_secs(15))
+                        .await;
+                }
+            });
+
+            let settings = RoomSettings::new(room_id);
+
+            cx.update_global(|state: &mut AppState, _| {
+                state.settings.rooms.push(settings.clone());
+            });
+
+            Self::new(room, user, settings, task)
+        });
+
+        let subscriptions = vec![cx.subscribe(&card, Self::on_event)];
+
+        card.update(cx, |card, cx| {
+            card._subscriptions = subscriptions;
+
+            if live_status == LiveStatus::Live {
+                cx.emit(RoomCardEvent::StatusChanged(RoomCardStatus::Recording));
+            }
+        });
+
+        card
+    }
+
+    fn on_event(this: Entity<Self>, event: &RoomCardEvent, cx: &mut App) {
+        match event {
+            RoomCardEvent::LiveStatusChanged(status) => {
+                this.update(cx, |card, cx| {
+                    card.status = match status {
+                        LiveStatus::Live => RoomCardStatus::Recording,
+                        _ => RoomCardStatus::Waiting,
+                    };
+                    cx.emit(RoomCardEvent::StatusChanged(card.status));
+                });
+            }
+            RoomCardEvent::StatusChanged(status) => {
+                match *status {
+                    RoomCardStatus::Recording => {
+                        let task_card = this.downgrade();
+                        let card = this.read(cx);
+                        let room_info = card.room_info.clone();
+                        let user_info = card.user_info.clone();
+                        let room_settings = card.settings.clone();
+                        let client = Arc::clone(&AppState::global(cx).client);
+                        let http_client = cx.http_client().clone();
+                        let global_setting = AppState::global(cx).settings.clone();
+                        let record_dir = global_setting.record_dir;
+                        let task = cx.spawn(async move |cx| {
+                            if let Ok(data) = client.get_live_room_stream_url(room_info.room_id, 10000).await
+                                && let Some(info) = data.playurl_info
+                                && let Some(stream) = info
+                                    .playurl
+                                    .stream
+                                    .iter()
+                                    .find(|stream| stream.protocol_name == "http_stream")
+                                && let Some(format) = stream
+                                    .format
+                                    .iter()
+                                    .find(|format| format.format_name == "flv")
+                            {
+                                let codec = &format.codec[0];
+                                let info = &codec.url_info[0];
+                                let url = format!("{}{}{}", info.host, codec.base_url, info.extra);
+
+                                let template = leon::Template::parse(&room_settings.record_name).unwrap();
+                                println!("{:?}", room_info.live_time);
+                                // parse 2025-07-27 11:15:56 北京时间
+                                let live_time = NaiveDateTime::parse_from_str(&room_info.live_time, "%Y-%m-%d %H:%M:%S").unwrap();
+                                let live_time = live_time.and_local_timezone(Shanghai).unwrap();
+                                println!("{live_time}");
+                                let values = RoomCardValues {
+                                    up_name: user_info.uname.clone(),
+                                    room_id: room_info.room_id,
+                                    datetime: live_time.format("%Y-%m-%d %H:%M").to_string(),
+                                };
+                                let ext = format.format_name.clone();
+                                let file_name = template.render(&values).unwrap();
+                                let file_path = format!("{record_dir}/{file_name}.{ext}");
+
+                                // ensure the directory exists
+                                std::fs::create_dir_all(&record_dir).unwrap();
+
+                                let mut file = File::create(file_path)?;
+                                let request = Request::builder()
+                                    .uri(url)
+                                    .header("Referer", "https://live.bilibili.com/")
+                                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                                    .method(Method::GET)
+                                    .body(AsyncBody::empty())                                    ?;
+                                let mut response = http_client.send(request).await?;
+
+                                if !response.status().is_success() {
+                                    return Err(anyhow::anyhow!("Failed to download file"));
+                                }
+
+                                let mut buffer = [0u8; 8192]; // 8KB buffer
+                                let mut stop = false;
+                                let body = response.body_mut();
+
+                                loop {
+                                    let bytes_read = body.read(&mut buffer).await?;
+                                    if bytes_read == 0 {
+                                        return Ok(());
+                                    }
+
+                                    file.write_all(&buffer[..bytes_read])?;
+
+                                    // check record status
+                                    let _ = task_card.update(cx, |card, _| {
+                                        if card.status != RoomCardStatus::Recording {
+                                            stop = true;
+                                        }
+                                    });
+
+                                    if stop {
+                                        break;
+                                    }
+                                }
+                            }
+
+                            Ok(())
+                        });
+
+                        this.update(cx, |this, _| {
+                            this._record_task = Some(task);
+                        });
+                    }
+                    RoomCardStatus::Waiting => {
+                        // 停止录制
+                        this.update(cx, |this, cx| {
+                            this.status = RoomCardStatus::Waiting;
+                            cx.notify();
+                            if let Some(task) = this._record_task.take() {
+                                task.detach();
+                            }
+                        });
+                    }
+                    RoomCardStatus::Error => {
+                        // 错误
+                    }
+                }
+            }
+        }
+    }
+
+    fn on_delete(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.entity();
+        cx.update_global(|state: &mut AppState, _| {
+            state.room_entities = state
+                .room_entities
+                .iter()
+                .filter(|room| room.entity_id() != this.entity_id())
+                .cloned()
+                .collect();
+            state.settings.rooms = state
+                .settings
+                .rooms
+                .iter()
+                .filter(|room| room.room_id != self.settings.room_id)
+                .cloned()
+                .collect();
+        });
+    }
+}
+
+impl EventEmitter<RoomCardEvent> for RoomCard {}
+
 impl Render for RoomCard {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let room_info = &self.room_info;
+
         div()
             .rounded_lg()
             .p_4()
             .border(px(1.0))
-            .border_color(gpui::rgb(0xe2e8f0))
+            .border_color(cx.theme().border)
             .child(
                 v_flex()
                     .gap_4()
@@ -63,31 +304,24 @@ impl Render for RoomCard {
                                     .items_start()
                                     .child(
                                         // 封面图片
-                                        div()
-                                            .w_16()
-                                            .h_12()
-                                            .rounded_md()
-                                            .bg(gpui::rgb(0xf1f5f9))
-                                            .child(
-                                                div()
+                                        div().w_32().h_20().rounded_lg().overflow_hidden().child(
+                                            div().rounded_lg().overflow_hidden().size_full().child(
+                                                img(room_info.user_cover.clone())
+                                                    .block()
                                                     .size_full()
-                                                    .bg(gpui::rgb(0x94a3b8))
-                                                    .rounded_md()
-                                                    .child(
-                                                        img(self.cover_url.clone())
-                                                            .block()
-                                                            .max_w_20()
-                                                            .size_full()
-                                                            .object_fit(ObjectFit::Cover),
-                                                    ),
+                                                    .object_fit(ObjectFit::Cover),
                                             ),
+                                        ),
                                     )
                                     .child(
                                         // 房间信息
                                         v_flex()
                                             .gap_1()
-                                            .child(self.title.clone().into_element())
-                                            .child(format!("房间号: {}", self.room).into_element())
+                                            .child(room_info.title.clone().into_element())
+                                            .child(
+                                                format!("房间号: {}", room_info.room_id)
+                                                    .into_element(),
+                                            )
                                             .child(
                                                 // 直播状态和在线人数
                                                 h_flex()
@@ -96,23 +330,23 @@ impl Render for RoomCard {
                                                     .child(
                                                         // 直播状态指示器
                                                         div().w_2().h_2().rounded_full().bg(
-                                                            if self.live_status == LiveStatus::Live
-                                                            {
-                                                                gpui::rgb(0xef4444)
-                                                            } else {
-                                                                gpui::rgb(0x6b7280)
+                                                            match room_info.live_status {
+                                                                LiveStatus::Live => {
+                                                                    gpui::rgb(0xef4444)
+                                                                }
+                                                                _ => gpui::rgb(0x6b7280),
                                                             },
                                                         ),
                                                     )
                                                     .child(Text::String(
-                                                        if self.live_status == LiveStatus::Live {
-                                                            "直播中".into()
-                                                        } else {
-                                                            "未开播".into()
+                                                        match room_info.live_status {
+                                                            LiveStatus::Live => "直播中".into(),
+                                                            LiveStatus::Carousel => "轮播中".into(),
+                                                            LiveStatus::Offline => "未开播".into(),
                                                         },
                                                     ))
                                                     .child(
-                                                        format!("{} 人观看", self.online_count)
+                                                        format!("{} 人观看", room_info.online)
                                                             .into_element(),
                                                     ),
                                             ),
@@ -122,18 +356,60 @@ impl Render for RoomCard {
                                 // 右侧：操作按钮
                                 v_flex()
                                     .gap_2()
-                                    .child(Button::new("开始录制").primary().label("开始录制"))
-                                    .child(Button::new("删除").danger().label("删除")),
+                                    .child(
+                                        Button::new("开始录制")
+                                            .primary()
+                                            .label(match self.status {
+                                                RoomCardStatus::Waiting => "开始录制",
+                                                RoomCardStatus::Recording => "停止录制",
+                                                RoomCardStatus::Error => "错误",
+                                            })
+                                            .on_click(cx.listener(|card, _, _, cx| {
+                                                card.status = match card.status {
+                                                    RoomCardStatus::Waiting => {
+                                                        RoomCardStatus::Recording
+                                                    }
+                                                    RoomCardStatus::Recording => {
+                                                        RoomCardStatus::Waiting
+                                                    }
+                                                    RoomCardStatus::Error => {
+                                                        RoomCardStatus::Waiting
+                                                    }
+                                                };
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("删除")
+                                            .danger()
+                                            .label("删除")
+                                            .on_click(cx.listener(Self::on_delete)),
+                                    ),
                             ),
                     )
-                    .child(div().child(self.description.clone().into_element()))
+                    // render html description
+                    .child(TextView::html("description", room_info.description.clone()))
                     .child(
                         h_flex()
                             .gap_1()
                             .items_center()
                             .child("分区: ".into_element())
-                            .child(self.area_name.clone().into_element()),
+                            .child(room_info.area_name.clone().into_element()),
                     ),
             )
+    }
+}
+
+impl Drop for RoomCard {
+    fn drop(&mut self) {
+        self.status = RoomCardStatus::Waiting;
+
+        for task in self._tasks.drain(..) {
+            task.detach();
+        }
+
+        if let Some(task) = self._record_task.take() {
+            task.detach();
+        }
     }
 }

@@ -2,87 +2,87 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct LiveRoomStreamUrl {
-    room_id: u64,
-    short_id: u64,
-    uid: u64,
-    is_hidden: bool,
-    is_locked: bool,
-    is_portrait: bool,
-    live_status: u8,
-    hidden_till: u64,
-    lock_till: u64,
-    encrypted: bool,
-    pwd_verified: bool,
-    live_time: u64,
-    room_shield: u8,
-    all_special_types: Vec<u8>,
-    playurl_info: Option<PlayUrlInfo>,
+    pub room_id: u64,
+    pub short_id: u64,
+    pub uid: u64,
+    pub is_hidden: bool,
+    pub is_locked: bool,
+    pub is_portrait: bool,
+    pub live_status: u8,
+    pub hidden_till: u64,
+    pub lock_till: u64,
+    pub encrypted: bool,
+    pub pwd_verified: bool,
+    pub live_time: u64,
+    pub room_shield: u8,
+    pub all_special_types: Vec<u8>,
+    pub playurl_info: Option<PlayUrlInfo>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PlayUrlInfo {
-    conf_json: String,
-    playurl: PlayUrl,
+    pub conf_json: String,
+    pub playurl: PlayUrl,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PlayUrl {
-    cid: u64,
-    g_qn_desc: Vec<QnDesc>,
-    stream: Vec<PlayStream>,
+    pub cid: u64,
+    pub g_qn_desc: Vec<QnDesc>,
+    pub stream: Vec<PlayStream>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct QnDesc {
-    qn: u32,
-    desc: String,
-    hdr_desc: String,
-    attr_desc: Option<String>,
-    hdr_type: u8,
-    media_base_desc: Option<MediaBaseDesc>,
+    pub qn: u32,
+    pub desc: String,
+    pub hdr_desc: String,
+    pub attr_desc: Option<String>,
+    pub hdr_type: u8,
+    pub media_base_desc: Option<MediaBaseDesc>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MediaBaseDesc {
-    detail_desc: MediaBaseDescDetail,
-    brief_desc: MediaBaseDescBrief,
+    pub detail_desc: MediaBaseDescDetail,
+    pub brief_desc: MediaBaseDescBrief,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MediaBaseDescDetail {
-    desc: String,
+    pub desc: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MediaBaseDescBrief {
-    desc: String,
-    badge: Option<String>,
+    pub desc: String,
+    pub badge: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PlayStream {
-    protocol_name: String,
-    format: Vec<PlayStreamFormat>,
+    pub protocol_name: String,
+    pub format: Vec<PlayStreamFormat>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PlayStreamFormat {
-    format_name: String,
-    codec: Vec<StreamCodec>,
+    pub format_name: String,
+    pub codec: Vec<StreamCodec>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct StreamCodec {
-    codec_name: String,
-    current_qn: u32,
-    accept_qn: Vec<u32>,
-    base_url: String,
-    url_info: Vec<StreamUrlInfo>,
+    pub codec_name: String,
+    pub current_qn: u32,
+    pub accept_qn: Vec<u32>,
+    pub base_url: String,
+    pub url_info: Vec<StreamUrlInfo>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct StreamUrlInfo {
-    host: String,
-    extra: String,
-    stream_ttl: u32,
+    pub host: String,
+    pub extra: String,
+    pub stream_ttl: u32,
 }

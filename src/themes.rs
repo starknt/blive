@@ -9,26 +9,19 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     popup_menu::PopupMenuExt,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
 
-const STATE_FILE: &str = "target/state.json";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct State {
-    theme: SharedString,
-}
-
 pub fn init(cx: &mut App) {
     // Load last theme state
-    let json = std::fs::read_to_string(STATE_FILE).unwrap_or_default();
-    if let Ok(state) = serde_json::from_str::<State>(&json) {
-        tracing::info!("apply theme: {:?}", state.theme);
-        AppState::global_mut(cx).theme_name = Some(state.theme.clone());
-        if let Some(theme) = THEMES.get(&state.theme) {
-            Theme::global_mut(cx).apply_config(theme);
-        }
+    if let Some(theme) = THEMES.get(
+        &AppState::global_mut(cx)
+            .settings
+            .theme_name
+            .clone()
+            .unwrap_or("default-light".into()),
+    ) {
+        Theme::global_mut(cx).apply_config(theme);
     }
 }
 
@@ -82,6 +75,7 @@ pub struct ThemeSwitcher {
 impl ThemeSwitcher {
     pub fn new(cx: &mut App) -> Self {
         let theme_name = AppState::global(cx)
+            .settings
             .theme_name
             .clone()
             .unwrap_or("default-light".into());
@@ -113,12 +107,7 @@ impl Render for ThemeSwitcher {
                 }
 
                 // Save AppState
-                let state = State {
-                    theme: theme_name.clone(),
-                };
-                AppState::global_mut(cx).theme_name = Some(theme_name.clone());
-                let json = serde_json::to_string_pretty(&state).unwrap();
-                std::fs::write(STATE_FILE, json).unwrap();
+                AppState::global_mut(cx).settings.theme_name = Some(theme_name.clone());
 
                 cx.notify();
             }))

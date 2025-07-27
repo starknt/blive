@@ -13,6 +13,7 @@ use std::{fmt, path::Path, sync::LazyLock};
 
 pub const APP_NAME: &str = "blive";
 pub const DISPLAY_NAME: &str = "B站录播姬";
+pub const DEFAULT_RECORD_NAME: &str = "{up_name}_{room_id}_{datetime}";
 
 static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
@@ -172,7 +173,7 @@ impl RoomSettings {
             room_id,
             quality: None,
             format: None,
-            record_name: "{up_name}_{room_id}_{datetime}".to_string(),
+            record_name: DEFAULT_RECORD_NAME.to_string(),
         }
     }
 }
@@ -183,7 +184,7 @@ impl Default for RoomSettings {
             room_id: 0,
             quality: None,
             format: None,
-            record_name: "{up_name}_{room_id}_{datetime}".to_string(),
+            record_name: DEFAULT_RECORD_NAME.to_string(),
         }
     }
 }

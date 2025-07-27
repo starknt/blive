@@ -11,10 +11,11 @@ use std::sync::Arc;
 use futures_util::join;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Root,
+    ActiveTheme as _, ContextModal, Disableable, Root,
     button::{Button, ButtonVariants},
     h_flex,
     input::{InputEvent, InputState, NumberInputEvent, StepAction, TextInput},
+    notification::Notification,
     text::Text,
     v_flex,
 };
@@ -140,7 +141,7 @@ impl LiveRecoderApp {
         cx.new(|cx| Self::new(title, window, cx))
     }
 
-    fn add_recording(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn add_recording(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.room_num > 0 {
             let client = Arc::clone(&AppState::global(cx).client);
             let room_num = self.room_num;
@@ -152,6 +153,10 @@ impl LiveRecoderApp {
                 .iter()
                 .any(|room| room.room_id == room_num)
             {
+                window.push_notification(
+                    Notification::warning(format!("直播间 {room_num} 已监听")),
+                    cx,
+                );
                 return;
             }
 

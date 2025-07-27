@@ -164,6 +164,7 @@ cargo test test_name
 感谢以下开源项目：
 
 - [GPUI](https://github.com/zed-industries/zed) - 现代化的 GUI 框架
+- [gpui-component](https://github.com/longbridge/gpui-component) - GPUI 组件库
 - [reqwest](https://github.com/seanmonstar/reqwest) - HTTP 客户端
 - [serde](https://github.com/serde-rs/serde) - 序列化框架
 

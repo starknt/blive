@@ -100,31 +100,33 @@ bilibili-recoder/
 
 ## 🔧 开发指南
 
-### 环境设置
+如果您想参与项目开发，请查看详细的 [贡献指南](CONTRIBUTING.md)。
 
-1. **安装开发依赖**
+### 快速开始
+
+1. **克隆项目**
    ```bash
-   cargo install cargo-watch  # 用于开发时自动重新编译
-   cargo install cargo-nextest # 用于运行测试
+   git clone https://github.com/starknt/bilibili-recoder.git
+   cd bilibili-recoder
    ```
 
-2. **运行开发模式**
+2. **安装依赖**
    ```bash
-   cargo watch -x run
+   cargo build
    ```
 
-### 代码规范
+3. **运行项目**
+   ```bash
+   cargo run --release
+   ```
 
-- 遵循 Rust 官方代码规范
-- 使用 `cargo fmt` 格式化代码
-- 使用 `cargo clippy` 进行代码检查
+### 开发工具
 
-### 测试
+- **代码格式化**: `cargo fmt`
+- **代码检查**: `cargo clippy`
+- **运行测试**: `cargo nextest run --all-features`
 
-```bash
-# 运行所有测试
-cargo nextest run --all-features
-```
+更多详细的开发指南、代码规范、测试指南和贡献流程，请参考 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 📝 许可证
 
@@ -132,7 +134,7 @@ cargo nextest run --all-features
 
 ## 🤝 贡献指南
 
-我们欢迎所有形式的贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解如何参与项目开发。
+我们欢迎所有形式的贡献！请查看详细的 [贡献指南](CONTRIBUTING.md) 了解如何参与项目开发。
 
 ### 贡献方式
 
@@ -141,6 +143,8 @@ cargo nextest run --all-features
 3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 打开 Pull Request
+
+详细的开发环境设置、代码规范、测试指南和贡献流程，请参考 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 🐛 问题反馈
 

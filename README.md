@@ -105,6 +105,7 @@ bilibili-recoder/
 1. **安装开发依赖**
    ```bash
    cargo install cargo-watch  # 用于开发时自动重新编译
+   cargo install cargo-nextest # 用于运行测试
    ```
 
 2. **运行开发模式**
@@ -122,10 +123,7 @@ bilibili-recoder/
 
 ```bash
 # 运行所有测试
-cargo test
-
-# 运行特定测试
-cargo test test_name
+cargo nextest run --all-features
 ```
 
 ## 📝 许可证

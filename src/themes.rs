@@ -12,15 +12,6 @@ use gpui_component::{
 
 use crate::state::AppState;
 
-pub fn init(cx: &mut App) {
-    let state = AppState::global(cx);
-    let theme_name = state.settings.theme_name.clone();
-    // Load last theme state
-    if let Some(theme) = THEMES.get(&theme_name) {
-        Theme::global_mut(cx).apply_config(theme);
-    }
-}
-
 static THEMES: LazyLock<HashMap<SharedString, ThemeConfig>> = LazyLock::new(|| {
     fn parse_themes(source: &str) -> ThemeSet {
         serde_json::from_str(source)
@@ -74,6 +65,15 @@ impl ThemeSwitcher {
 
         Self {
             current_theme_name: theme_name,
+        }
+    }
+
+    pub fn init(cx: &mut App) {
+        let state = AppState::global(cx);
+        let theme_name = state.settings.theme_name.clone();
+        // Load last theme state
+        if let Some(theme) = THEMES.get(&theme_name) {
+            Theme::global_mut(cx).apply_config(theme);
         }
     }
 }

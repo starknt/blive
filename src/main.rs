@@ -1,5 +1,5 @@
 use anyhow::Ok;
-use blive::{LiveRecoderApp, assets::Assets, state::AppState};
+use blive::{LiveRecoderApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
 use gpui::{prelude::*, *};
 use gpui_component::{Root, TitleBar, theme};
 use tracing_subscriber::prelude::*;
@@ -21,7 +21,6 @@ fn main() {
 
     app.run(move |cx| {
         gpui_component::init(cx);
-        theme::init(cx);
 
         let http_client = std::sync::Arc::new(
             reqwest_client::ReqwestClient::user_agent("LiveRecorder/0.1.0").unwrap(),
@@ -29,6 +28,8 @@ fn main() {
         cx.set_http_client(http_client);
 
         AppState::init(cx);
+        theme::init(cx);
+        ThemeSwitcher::init(cx);
         LiveRecoderApp::init(cx);
 
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
@@ -38,7 +39,6 @@ fn main() {
         });
 
         cx.on_app_quit(move |cx| {
-            println!("on_app_quit");
             cx.read_global(|state: &AppState, _| {
                 state.settings.save();
             });

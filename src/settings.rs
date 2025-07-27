@@ -2,21 +2,24 @@ use crate::{
     components::{SettingsModal, SettingsModalEvent},
     state::AppState,
 };
+use directories::ProjectDirs;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ContextModal, IconName, Sizable,
     button::{Button, ButtonVariants},
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt,
-    path::Path,
-    sync::{LazyLock, OnceLock},
-};
+use std::{fmt, path::Path, sync::LazyLock};
 
 static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
         "target/settings.json".to_string()
+    } else if let Some(project_dirs) = ProjectDirs::from_path("blive".into()) {
+        project_dirs
+            .config_dir()
+            .join("settings.json")
+            .to_string_lossy()
+            .to_string()
     } else {
         // 1. 如果是 debug 模式，则从 target/settings.json 读取
         // 2. 如果是 release 模式，则从 settings.json 读取，在windows下，从 C:\Users\Administrator\AppData\Local\LiveRecoder\settings.json 读取，在mac下，从.config/LiveRecoder/settings.json 读取
@@ -36,7 +39,26 @@ static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
     }
 });
 
-static DEFAULT_RECORD_DIR: OnceLock<String> = OnceLock::new();
+static DEFAULT_RECORD_DIR: LazyLock<String> = LazyLock::new(|| {
+    if let Some(user_dirs) = directories::UserDirs::new() {
+        if let Some(movies_dir) = user_dirs.video_dir() {
+            movies_dir.join("blive").to_string_lossy().to_string()
+        } else {
+            std::env::home_dir()
+                .unwrap()
+                .join("Movies/blive")
+                .to_string_lossy()
+                .to_string()
+        }
+    } else {
+        std::env::home_dir()
+            .unwrap()
+            .join("Movies/blive")
+            .to_string_lossy()
+            .to_string()
+    }
+});
+
 const DEFAULT_THEME: &str = "Catppuccin Mocha";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -125,30 +147,10 @@ impl GlobalSettings {
 
 impl Default for GlobalSettings {
     fn default() -> Self {
-        let record_dir = DEFAULT_RECORD_DIR.get_or_init(|| {
-            if let Some(user_dirs) = directories::UserDirs::new() {
-                if let Some(movies_dir) = user_dirs.video_dir() {
-                    movies_dir.join("LiveRecoder").to_string_lossy().to_string()
-                } else {
-                    std::env::home_dir()
-                        .unwrap()
-                        .join("Movies/LiveRecoder")
-                        .to_string_lossy()
-                        .to_string()
-                }
-            } else {
-                std::env::home_dir()
-                    .unwrap()
-                    .join("Movies/LiveRecoder")
-                    .to_string_lossy()
-                    .to_string()
-            }
-        });
-
         Self {
             quality: RecordQuality::Original,
             format: "flv".to_string(),
-            record_dir: record_dir.to_owned(),
+            record_dir: DEFAULT_RECORD_DIR.to_owned(),
             theme_name: DEFAULT_THEME.into(),
             rooms: vec![],
         }

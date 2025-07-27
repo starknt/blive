@@ -25,7 +25,7 @@ use std::{borrow::Cow, io::Write};
 use std::{fs::File, sync::Arc, time::Duration};
 
 #[derive(Clone, Debug)]
-pub enum RoomCardEvent {
+enum RoomCardEvent {
     LiveStatusChanged(LiveStatus),
     StatusChanged(RoomCardStatus),
 }
@@ -56,7 +56,6 @@ impl Values for RoomCardValues {
 
 pub struct RoomCard {
     pub(crate) _tasks: Vec<Task<()>>,
-    pub(crate) _record_task: Option<Task<anyhow::Result<()>>>,
     pub(crate) status: RoomCardStatus,
     pub(crate) room_info: LiveRoomInfoData,
     pub(crate) user_info: LiveUserInfo,
@@ -80,9 +79,96 @@ impl RoomCard {
             },
             room_info: room,
             user_info: user,
-            _record_task: None,
             settings,
         }
+    }
+
+    fn do_record(this: Entity<RoomCard>, cx: &mut App) {
+        let task_card = this.downgrade();
+        let card = this.read(cx);
+        let room_info = card.room_info.clone();
+        let user_info = card.user_info.clone();
+        let room_settings = card.settings.clone();
+        let client = Arc::clone(&AppState::global(cx).client);
+        let http_client = cx.http_client().clone();
+        let global_setting = AppState::global(cx).settings.clone();
+        let record_dir = global_setting.record_dir;
+
+        cx.spawn(async move |cx| {
+            if let Ok(data) = client.get_live_room_stream_url(room_info.room_id, 10000).await
+                && let Some(info) = data.playurl_info
+                && let Some(stream) = info
+                    .playurl
+                    .stream
+                    .iter()
+                    .find(|stream| stream.protocol_name == "http_stream")
+                && let Some(format) = stream
+                    .format
+                    .iter()
+                    .find(|format| format.format_name == "flv")
+            {
+                let codec = &format.codec[0];
+                let info = &codec.url_info[0];
+                let url = format!("{}{}{}", info.host, codec.base_url, info.extra);
+
+                let template = leon::Template::parse(&room_settings.record_name).unwrap();
+                println!("{:?}", room_info.live_time);
+                // parse 2025-07-27 11:15:56 北京时间
+                let live_time = NaiveDateTime::parse_from_str(&room_info.live_time, "%Y-%m-%d %H:%M:%S").unwrap();
+                let live_time = live_time.and_local_timezone(Shanghai).unwrap();
+                println!("{live_time}");
+                let values = RoomCardValues {
+                    up_name: user_info.uname.clone(),
+                    room_id: room_info.room_id,
+                    datetime: live_time.format("%Y-%m-%d %H:%M").to_string(),
+                };
+                let ext = format.format_name.clone();
+                let file_name = template.render(&values).unwrap();
+                let file_path = format!("{record_dir}/{file_name}.{ext}");
+
+                // ensure the directory exists
+                std::fs::create_dir_all(&record_dir).unwrap();
+
+                let mut file = File::create(file_path)?;
+                let request = Request::builder()
+                    .uri(url)
+                    .header("Referer", "https://live.bilibili.com/")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .method(Method::GET)
+                    .body(AsyncBody::empty())                                    ?;
+                let mut response = http_client.send(request).await?;
+
+                if !response.status().is_success() {
+                    return Err(anyhow::anyhow!("Failed to download file"));
+                }
+
+                let mut buffer = [0u8; 8192]; // 8KB buffer
+                let mut stop = false;
+                let body = response.body_mut();
+
+                loop {
+                    let bytes_read = body.read(&mut buffer).await?;
+                    if bytes_read == 0 {
+                        return Ok(());
+                    }
+
+                    file.write_all(&buffer[..bytes_read])?;
+
+                    // check record status
+                    let _ = task_card.update(cx, |card, _| {
+                        if card.status != RoomCardStatus::Recording {
+                            stop = true;
+                        }
+                    });
+
+                    if stop {
+                        break;
+                    }
+                }
+            }
+
+            Ok(())
+        }).detach();
     }
 
     pub fn view(
@@ -147,103 +233,13 @@ impl RoomCard {
             RoomCardEvent::StatusChanged(status) => {
                 match *status {
                     RoomCardStatus::Recording => {
-                        let task_card = this.downgrade();
-                        let card = this.read(cx);
-                        let room_info = card.room_info.clone();
-                        let user_info = card.user_info.clone();
-                        let room_settings = card.settings.clone();
-                        let client = Arc::clone(&AppState::global(cx).client);
-                        let http_client = cx.http_client().clone();
-                        let global_setting = AppState::global(cx).settings.clone();
-                        let record_dir = global_setting.record_dir;
-                        let task = cx.spawn(async move |cx| {
-                            if let Ok(data) = client.get_live_room_stream_url(room_info.room_id, 10000).await
-                                && let Some(info) = data.playurl_info
-                                && let Some(stream) = info
-                                    .playurl
-                                    .stream
-                                    .iter()
-                                    .find(|stream| stream.protocol_name == "http_stream")
-                                && let Some(format) = stream
-                                    .format
-                                    .iter()
-                                    .find(|format| format.format_name == "flv")
-                            {
-                                let codec = &format.codec[0];
-                                let info = &codec.url_info[0];
-                                let url = format!("{}{}{}", info.host, codec.base_url, info.extra);
-
-                                let template = leon::Template::parse(&room_settings.record_name).unwrap();
-                                println!("{:?}", room_info.live_time);
-                                // parse 2025-07-27 11:15:56 北京时间
-                                let live_time = NaiveDateTime::parse_from_str(&room_info.live_time, "%Y-%m-%d %H:%M:%S").unwrap();
-                                let live_time = live_time.and_local_timezone(Shanghai).unwrap();
-                                println!("{live_time}");
-                                let values = RoomCardValues {
-                                    up_name: user_info.uname.clone(),
-                                    room_id: room_info.room_id,
-                                    datetime: live_time.format("%Y-%m-%d %H:%M").to_string(),
-                                };
-                                let ext = format.format_name.clone();
-                                let file_name = template.render(&values).unwrap();
-                                let file_path = format!("{record_dir}/{file_name}.{ext}");
-
-                                // ensure the directory exists
-                                std::fs::create_dir_all(&record_dir).unwrap();
-
-                                let mut file = File::create(file_path)?;
-                                let request = Request::builder()
-                                    .uri(url)
-                                    .header("Referer", "https://live.bilibili.com/")
-                                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                                    .method(Method::GET)
-                                    .body(AsyncBody::empty())                                    ?;
-                                let mut response = http_client.send(request).await?;
-
-                                if !response.status().is_success() {
-                                    return Err(anyhow::anyhow!("Failed to download file"));
-                                }
-
-                                let mut buffer = [0u8; 8192]; // 8KB buffer
-                                let mut stop = false;
-                                let body = response.body_mut();
-
-                                loop {
-                                    let bytes_read = body.read(&mut buffer).await?;
-                                    if bytes_read == 0 {
-                                        return Ok(());
-                                    }
-
-                                    file.write_all(&buffer[..bytes_read])?;
-
-                                    // check record status
-                                    let _ = task_card.update(cx, |card, _| {
-                                        if card.status != RoomCardStatus::Recording {
-                                            stop = true;
-                                        }
-                                    });
-
-                                    if stop {
-                                        break;
-                                    }
-                                }
-                            }
-
-                            Ok(())
-                        });
-
-                        this.update(cx, |this, _| {
-                            this._record_task = Some(task);
-                        });
+                        Self::do_record(this, cx);
                     }
                     RoomCardStatus::Waiting => {
                         // 停止录制
                         this.update(cx, |this, cx| {
                             this.status = RoomCardStatus::Waiting;
                             cx.notify();
-                            if let Some(task) = this._record_task.take() {
-                                task.detach();
-                            }
                         });
                     }
                     RoomCardStatus::Error => {
@@ -341,19 +337,43 @@ impl Render for RoomCard {
                                                             LiveStatus::Offline => "未开播".into(),
                                                         },
                                                     ))
-                                                    .child(
-                                                        format!("{} 人观看", room_info.online)
-                                                            .into_element(),
+                                                    .when(
+                                                        self.status == RoomCardStatus::Recording,
+                                                        |div| {
+                                                            div.child(
+                                                                format!(
+                                                                    "{} 人观看",
+                                                                    room_info.online
+                                                                )
+                                                                .into_element(),
+                                                            )
+                                                        },
                                                     ),
                                             ),
                                     ),
                             )
                             .child(
-                                // 右侧：操作按钮
-                                v_flex()
-                                    .gap_2()
-                                    .child(
-                                        Button::new("开始录制")
+                                v_flex().gap_2().child(
+                                    Button::new("删除")
+                                        .danger()
+                                        .label("删除")
+                                        .on_click(cx.listener(Self::on_delete)),
+                                ),
+                            ),
+                    )
+                    // render html description
+                    .child(TextView::html("description", room_info.description.clone()))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(Text::String(
+                                format!("分区: {}", room_info.area_name).into(),
+                            ))
+                            .children({
+                                if self.status == RoomCardStatus::Recording {
+                                    vec![
+                                        Button::new("record")
                                             .primary()
                                             .label(match self.status {
                                                 RoomCardStatus::Waiting => "开始录制",
@@ -374,23 +394,11 @@ impl Render for RoomCard {
                                                 };
                                                 cx.notify();
                                             })),
-                                    )
-                                    .child(
-                                        Button::new("删除")
-                                            .danger()
-                                            .label("删除")
-                                            .on_click(cx.listener(Self::on_delete)),
-                                    ),
-                            ),
-                    )
-                    // render html description
-                    .child(TextView::html("description", room_info.description.clone()))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .items_center()
-                            .child("分区: ".into_element())
-                            .child(room_info.area_name.clone().into_element()),
+                                    ]
+                                } else {
+                                    vec![]
+                                }
+                            }),
                     ),
             )
     }
@@ -401,10 +409,6 @@ impl Drop for RoomCard {
         self.status = RoomCardStatus::Waiting;
 
         for task in self._tasks.drain(..) {
-            task.detach();
-        }
-
-        if let Some(task) = self._record_task.take() {
             task.detach();
         }
     }

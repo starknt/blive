@@ -66,6 +66,7 @@ fn main() {
 
         cx.spawn(async move |cx| {
             let options = WindowOptions {
+                app_id: Some(APP_NAME.into()),
                 window_bounds: Some(WindowBounds::Windowed(window_bounds)),
                 titlebar: Some(TitleBar::title_bar_options()),
                 window_min_size: Some(gpui::Size {
@@ -73,6 +74,8 @@ fn main() {
                     height: px(480.),
                 }),
                 kind: WindowKind::Normal,
+                #[cfg(not(target_os = "linux"))]
+                window_background: gpui::WindowBackgroundAppearance::Blurred,
                 #[cfg(target_os = "linux")]
                 window_background: gpui::WindowBackgroundAppearance::Transparent,
                 #[cfg(target_os = "linux")]

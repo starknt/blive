@@ -1,3 +1,4 @@
+use anyhow::Ok;
 use blive::{LiveRecoderApp, assets::Assets, state::AppState};
 use gpui::{prelude::*, *};
 use gpui_component::{Root, TitleBar, theme};
@@ -28,6 +29,7 @@ fn main() {
         cx.set_http_client(http_client);
 
         AppState::init(cx);
+        LiveRecoderApp::init(cx);
 
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
 
@@ -35,12 +37,12 @@ fn main() {
             cx.quit();
         });
 
-        cx.on_app_quit({
-            move |cx| {
-                cx.background_executor().spawn(async move {
-                    // TODO: 保存配置
-                })
-            }
+        cx.on_app_quit(move |cx| {
+            println!("on_app_quit");
+            cx.read_global(|state: &AppState, _| {
+                state.settings.save();
+            });
+            cx.spawn(async |_| {})
         })
         .detach();
 

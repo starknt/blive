@@ -88,12 +88,14 @@ impl RoomCard {
     pub fn view(
         room: LiveRoomInfoData,
         user: LiveUserInfo,
+        settings: RoomSettings,
         cx: &mut App,
         client: Arc<ApiClient>,
     ) -> Entity<Self> {
+        let room_id = room.room_id;
         let live_status = room.live_status;
+
         let card = cx.new(|cx| {
-            let room_id = room.room_id;
             let client = Arc::clone(&client);
             let task = cx.spawn(async move |this: WeakEntity<RoomCard>, cx| {
                 while let Some(this) = this.upgrade() {
@@ -113,12 +115,6 @@ impl RoomCard {
                         .timer(Duration::from_secs(15))
                         .await;
                 }
-            });
-
-            let settings = RoomSettings::new(room_id);
-
-            cx.update_global(|state: &mut AppState, _| {
-                state.settings.rooms.push(settings.clone());
             });
 
             Self::new(room, user, settings, task)

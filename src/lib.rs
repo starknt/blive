@@ -19,7 +19,9 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::{components::RoomCard, state::AppState, title_bar::AppTitleBar};
+use crate::{
+    components::RoomCard, settings::RoomSettings, state::AppState, title_bar::AppTitleBar,
+};
 
 pub struct LiveRecoderApp {
     room_num: u64,
@@ -85,6 +87,32 @@ impl LiveRecoderApp {
 }
 
 impl LiveRecoderApp {
+    pub fn init(cx: &mut App) {
+        let state = AppState::global(cx);
+        for settings in state.settings.rooms.clone() {
+            let client = Arc::clone(&state.client);
+            let room_id = settings.room_id;
+            cx.spawn(async move |cx| {
+                let (room_data, user_data) = join!(
+                    client.get_live_room_info(room_id),
+                    client.get_live_room_user_info(room_id)
+                );
+                if let Ok(room_data) = room_data
+                    && let Ok(user_data) = user_data
+                {
+                    cx.update_global(|state: &mut AppState, cx| {
+                        let room =
+                            RoomCard::view(room_data, user_data.info, settings.clone(), cx, client);
+
+                        state.room_entities.push(room);
+                    })
+                    .unwrap();
+                };
+            })
+            .detach();
+        }
+    }
+
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let title_bar = cx.new(|cx| AppTitleBar::new("Live Recorder".into(), window, cx));
         let room_num = 1804892069;
@@ -136,9 +164,12 @@ impl LiveRecoderApp {
                     && let Ok(user_data) = user_data
                 {
                     cx.update_global(|state: &mut AppState, cx| {
-                        let room = RoomCard::view(room_data, user_data.info, cx, client);
+                        let settings = RoomSettings::new(room_num);
+                        let room =
+                            RoomCard::view(room_data, user_data.info, settings.clone(), cx, client);
 
                         state.room_entities.push(room);
+                        state.settings.rooms.push(settings);
                     })
                     .unwrap();
                 };

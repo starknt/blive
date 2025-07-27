@@ -1,19 +1,18 @@
+use crate::components::SettingsModal;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ContextModal, IconName, Sizable,
     button::{Button, ButtonVariants},
-    v_flex,
 };
 use serde::{Deserialize, Serialize};
-
-use crate::state::AppState;
+use std::fmt;
 
 #[cfg(debug_assertions)]
 const SETTINGS_FILE: &str = "target/settings.json";
 #[cfg(not(debug_assertions))]
 const SETTINGS_FILE: &str = "settings.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum RecordQuality {
     // 杜比
     Dolby,
@@ -31,19 +30,21 @@ pub enum RecordQuality {
     Smooth,
 }
 
-impl RecordQuality {
-    pub fn to_string(&self) -> &str {
+impl fmt::Display for RecordQuality {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RecordQuality::Dolby => "杜比",
-            RecordQuality::UHD4K => "4K",
-            RecordQuality::Original => "原画",
-            RecordQuality::BlueRay => "蓝光",
-            RecordQuality::UltraHD => "超清",
-            RecordQuality::HD => "高清",
-            RecordQuality::Smooth => "流畅",
+            RecordQuality::Dolby => write!(f, "杜比"),
+            RecordQuality::UHD4K => write!(f, "4K"),
+            RecordQuality::Original => write!(f, "原画"),
+            RecordQuality::BlueRay => write!(f, "蓝光"),
+            RecordQuality::UltraHD => write!(f, "超清"),
+            RecordQuality::HD => write!(f, "高清"),
+            RecordQuality::Smooth => write!(f, "流畅"),
         }
     }
+}
 
+impl RecordQuality {
     pub fn to_quality(&self) -> u32 {
         match self {
             RecordQuality::Dolby => 30000,
@@ -59,7 +60,7 @@ impl RecordQuality {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalSettings {
-    pub theme_name: Option<SharedString>,
+    pub theme_name: SharedString,
     /// 录制质量
     pub quality: RecordQuality,
     /// 录制格式
@@ -75,20 +76,15 @@ impl GlobalSettings {
             // 1. 如果是 debug 模式，则从 target/settings.json 读取
             // 2. 如果是 release 模式，则从 settings.json 读取，在windows下，从 C:\Users\Administrator\AppData\Local\LiveRecoder\settings.json 读取，在mac下，从.config/LiveRecoder/settings.json 读取
             // 3. 如果文件不存在，则使用默认值
-            #[cfg(debug_assertions)]
+            let path = std::path::Path::new(SETTINGS_FILE);
+            if path.exists()
+                && let Ok(file_content) = std::fs::read_to_string(path)
             {
-                let path = std::path::Path::new(SETTINGS_FILE);
-                if path.exists() {
-                    serde_json::from_str(&std::fs::read_to_string(path).unwrap())
-                        .unwrap_or_default()
+                if let Ok(settings) = serde_json::from_str::<GlobalSettings>(&file_content) {
+                    return settings;
                 }
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                let path = std::path::Path::new(SETTINGS_FILE);
-                if path.exists() {
-                    serde_json::from_str(std::fs::read_to_string(path).unwrap()).unwrap_or_default()
-                }
+
+                return GlobalSettings::default();
             }
 
             GlobalSettings::default()
@@ -113,7 +109,7 @@ impl Default for GlobalSettings {
             quality: RecordQuality::Original,
             format: "flv".to_string(),
             record_dir: record_dir.to_string_lossy().to_string(),
-            theme_name: None,
+            theme_name: "default-light".into(),
             rooms: vec![],
         }
     }
@@ -155,62 +151,38 @@ impl Default for RoomSettings {
 
 #[derive(Debug)]
 pub struct AppSettings {
-    #[allow(dead_code)]
-    layout: Axis,
     focus_handle: FocusHandle,
+    setting_modal: Entity<SettingsModal>,
 }
 
 impl AppSettings {
-    pub fn new(cx: &mut App) -> Self {
+    pub fn new(window: &mut Window, cx: &mut App) -> Self {
+        let setting_modal = SettingsModal::view(window, cx);
+
         Self {
-            layout: Axis::Vertical,
             focus_handle: cx.focus_handle(),
+            setting_modal,
         }
     }
 
     fn show_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let setting_modal = self.setting_modal.clone();
         window.open_modal(cx, move |modal, _window, _cx| {
             modal
-                .title("设置")
+                .title("全局设置")
                 .content_center()
                 .overlay(true)
                 .overlay_closable(true)
-                .child(
-                    v_flex()
-                        .gap_3()
-                        .child("This is a modal dialog.")
-                        .child("You can put anything here."),
-                )
-                .footer({
-                    move |_, _, _, _| {
-                        vec![
-                            Button::new("open_dir")
-                                .label("打开目录")
-                                .on_click(move |_, _, cx| {
-                                    cx.spawn(async move |cx| {
-                                        if let Some(handle) =
-                                            rfd::AsyncFileDialog::new().pick_folder().await
-                                        {
-                                            let _ =
-                                                cx.update_global(move |state: &mut AppState, _| {
-                                                    state.settings.record_dir = handle
-                                                        .path()
-                                                        .to_owned()
-                                                        .to_string_lossy()
-                                                        .to_string();
-                                                    println!("{}", state.settings.record_dir);
-                                                });
-                                        }
-                                    })
-                                    .detach();
-                                }),
-                            Button::new("cancel")
-                                .label("取消")
-                                .on_click(move |_, window, cx| {
-                                    window.close_modal(cx);
-                                }),
-                        ]
-                    }
+                .child(setting_modal.clone())
+                .footer(|_, _, _, _| {
+                    vec![
+                        Button::new("save").label("保存设置").primary(),
+                        Button::new("cancel").label("取消").danger().on_click(
+                            move |_, window, cx| {
+                                window.close_modal(cx);
+                            },
+                        ),
+                    ]
                 })
         });
     }

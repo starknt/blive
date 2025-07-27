@@ -13,14 +13,10 @@ use gpui_component::{
 use crate::state::AppState;
 
 pub fn init(cx: &mut App) {
+    let state = AppState::global(cx);
+    let theme_name = state.settings.theme_name.clone();
     // Load last theme state
-    if let Some(theme) = THEMES.get(
-        &AppState::global_mut(cx)
-            .settings
-            .theme_name
-            .clone()
-            .unwrap_or("default-light".into()),
-    ) {
+    if let Some(theme) = THEMES.get(&theme_name) {
         Theme::global_mut(cx).apply_config(theme);
     }
 }
@@ -74,11 +70,7 @@ pub struct ThemeSwitcher {
 
 impl ThemeSwitcher {
     pub fn new(cx: &mut App) -> Self {
-        let theme_name = AppState::global(cx)
-            .settings
-            .theme_name
-            .clone()
-            .unwrap_or("default-light".into());
+        let theme_name = AppState::global(cx).settings.theme_name.clone();
 
         Self {
             current_theme_name: theme_name,
@@ -107,7 +99,7 @@ impl Render for ThemeSwitcher {
                 }
 
                 // Save AppState
-                AppState::global_mut(cx).settings.theme_name = Some(theme_name.clone());
+                AppState::global_mut(cx).settings.theme_name = theme_name.clone();
 
                 cx.notify();
             }))

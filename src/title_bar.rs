@@ -15,7 +15,7 @@ pub struct AppTitleBar {
 }
 
 impl AppTitleBar {
-    pub fn new(title: String, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(title: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         if cx.should_auto_hide_scrollbars() {
             Theme::global_mut(cx).scrollbar_show = ScrollbarShow::Scrolling;
         } else {
@@ -23,7 +23,7 @@ impl AppTitleBar {
         }
 
         let theme_switcher = cx.new(|cx| ThemeSwitcher::new(cx));
-        let settings = cx.new(|cx| AppSettings::new(cx));
+        let settings = cx.new(|cx| AppSettings::new(window, cx));
 
         Self {
             title,

@@ -42,7 +42,8 @@ fn main() {
             cx.read_global(|state: &AppState, _| {
                 state.settings.save();
             });
-            cx.spawn(async |_| {})
+
+            async {}
         })
         .detach();
 

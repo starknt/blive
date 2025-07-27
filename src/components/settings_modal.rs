@@ -4,10 +4,12 @@ use crate::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
+    ContextModal,
     button::{Button, ButtonVariants},
     dropdown::{Dropdown, DropdownState},
     h_flex,
     input::{InputState, TextInput},
+    notification::Notification,
     text::Text,
     v_flex,
 };
@@ -83,7 +85,7 @@ impl SettingsModal {
         cx.new(|cx| Self::new(window, cx))
     }
 
-    pub fn save_settings(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn save_settings(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         // 获取当前输入的值
         let record_dir = self.record_dir_input.read(cx).value();
         let quality_str = self.quality_input.read(cx).selected_value();
@@ -113,6 +115,7 @@ impl SettingsModal {
         cx.emit(SettingsModalEvent::SaveSettings(
             self.global_settings.clone(),
         ));
+        window.push_notification(Notification::success("设置保存成功"), cx);
     }
 
     fn open_dir(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -132,37 +135,53 @@ impl SettingsModal {
 
 impl Render for SettingsModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().gap_4().child(
-            v_flex()
-                .gap_3()
-                .child(
+        v_flex()
+            .gap_y_4()
+            .child(
+                v_flex().gap_4().child(
                     v_flex()
-                        .gap_y_2()
-                        .child(Text::String("录制目录".into()))
+                        .gap_2()
                         .child(
-                            h_flex()
-                                .gap_x_4()
-                                .child(TextInput::new(&self.record_dir_input))
+                            v_flex()
+                                .gap_y_2()
+                                .child(Text::String("录制目录".into()))
                                 .child(
-                                    Button::new("open_dir")
-                                        .label("打开目录")
-                                        .primary()
-                                        .on_click(cx.listener(Self::open_dir)),
+                                    h_flex()
+                                        .gap_x_4()
+                                        .child(TextInput::new(&self.record_dir_input))
+                                        .child(
+                                            Button::new("open_dir")
+                                                .label("选择目录")
+                                                .primary()
+                                                .on_click(cx.listener(Self::open_dir)),
+                                        ),
                                 ),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .child(Text::String("录制质量".into()))
+                                .child(Dropdown::new(&self.quality_input).max_w_32()),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .child(Text::String("录制格式".into()))
+                                .child(Dropdown::new(&self.format_input).max_w_32()),
                         ),
-                )
-                .child(
-                    v_flex()
-                        .gap_2()
-                        .child(Text::String("录制质量".into()))
-                        .child(Dropdown::new(&self.quality_input).max_w_32()),
-                )
-                .child(
-                    v_flex()
-                        .gap_2()
-                        .child(Text::String("录制格式".into()))
-                        .child(Dropdown::new(&self.format_input).max_w_32()),
                 ),
-        )
+            )
+            .child(h_flex().justify_end().gap_x_4().children(vec![
+                    Button::new("save")
+                        .label("保存设置")
+                        .primary()
+                        .on_click(cx.listener(Self::save_settings)),
+                    Button::new("cancel")
+                        .label("取消")
+                        .danger()
+                        .on_click(move |_, window, cx| {
+                            window.close_modal(cx);
+                        }),
+                ]))
     }
 }

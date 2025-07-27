@@ -1,16 +1,42 @@
-use crate::components::SettingsModal;
+use crate::{
+    components::{SettingsModal, SettingsModalEvent},
+    state::AppState,
+};
 use gpui::{prelude::*, *};
 use gpui_component::{
     ContextModal, IconName, Sizable,
     button::{Button, ButtonVariants},
 };
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{
+    fmt,
+    path::Path,
+    sync::{LazyLock, OnceLock},
+};
 
-#[cfg(debug_assertions)]
-const SETTINGS_FILE: &str = "target/settings.json";
-#[cfg(not(debug_assertions))]
-const SETTINGS_FILE: &str = "settings.json";
+static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
+    if cfg!(debug_assertions) {
+        "target/settings.json".to_string()
+    } else {
+        // 1. 如果是 debug 模式，则从 target/settings.json 读取
+        // 2. 如果是 release 模式，则从 settings.json 读取，在windows下，从 C:\Users\Administrator\AppData\Local\LiveRecoder\settings.json 读取，在mac下，从.config/LiveRecoder/settings.json 读取
+        if cfg!(target_os = "windows") {
+            std::env::home_dir()
+                .unwrap()
+                .join("AppData/Local/blive/settings.json")
+                .to_string_lossy()
+                .to_string()
+        } else {
+            std::env::home_dir()
+                .unwrap()
+                .join(".config/blive/settings.json")
+                .to_string_lossy()
+                .to_string()
+        }
+    }
+});
+
+static DEFAULT_RECORD_DIR: OnceLock<String> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum RecordQuality {
@@ -72,43 +98,56 @@ pub struct GlobalSettings {
 impl GlobalSettings {
     pub fn load() -> Self {
         // 读取配置文件
+        let settings_path = &SETTINGS_FILE;
+        let settings_path: &str = settings_path.as_str();
+        let path = Path::new(settings_path);
+        if path.exists()
+            && let Ok(file_content) = std::fs::read_to_string(path)
         {
-            // 1. 如果是 debug 模式，则从 target/settings.json 读取
-            // 2. 如果是 release 模式，则从 settings.json 读取，在windows下，从 C:\Users\Administrator\AppData\Local\LiveRecoder\settings.json 读取，在mac下，从.config/LiveRecoder/settings.json 读取
-            // 3. 如果文件不存在，则使用默认值
-            let path = std::path::Path::new(SETTINGS_FILE);
-            if path.exists()
-                && let Ok(file_content) = std::fs::read_to_string(path)
-            {
-                if let Ok(settings) = serde_json::from_str::<GlobalSettings>(&file_content) {
-                    return settings;
-                }
-
-                return GlobalSettings::default();
+            if let Ok(settings) = serde_json::from_str::<GlobalSettings>(&file_content) {
+                return settings;
             }
 
-            GlobalSettings::default()
+            return GlobalSettings::default();
         }
+
+        GlobalSettings::default()
     }
 
     pub fn save(&self) {
-        let path = std::path::Path::new(SETTINGS_FILE);
+        let settings_path = &SETTINGS_FILE;
+        let settings_path: &str = settings_path.as_str();
+        let path = Path::new(&settings_path);
         std::fs::write(path, serde_json::to_string(self).unwrap()).unwrap();
     }
 }
 
 impl Default for GlobalSettings {
     fn default() -> Self {
-        let record_dir = {
-            // 1. 如果是mac默认是 ~/Movies/LiveRecoder
-            // 2. 如果是windows默认是 C:\Users\C\Movies\LiveRecoder
-            std::env::home_dir().unwrap().join("Movies/LiveRecoder")
-        };
+        let record_dir = DEFAULT_RECORD_DIR.get_or_init(|| {
+            if let Some(user_dirs) = directories::UserDirs::new() {
+                if let Some(movies_dir) = user_dirs.video_dir() {
+                    movies_dir.join("LiveRecoder").to_string_lossy().to_string()
+                } else {
+                    std::env::home_dir()
+                        .unwrap()
+                        .join("Movies/LiveRecoder")
+                        .to_string_lossy()
+                        .to_string()
+                }
+            } else {
+                std::env::home_dir()
+                    .unwrap()
+                    .join("Movies/LiveRecoder")
+                    .to_string_lossy()
+                    .to_string()
+            }
+        });
 
         Self {
             quality: RecordQuality::Original,
             format: "flv".to_string(),
-            record_dir: record_dir.to_string_lossy().to_string(),
+            record_dir: record_dir.to_owned(),
             theme_name: "default-light".into(),
             rooms: vec![],
         }
@@ -149,10 +188,10 @@ impl Default for RoomSettings {
     }
 }
 
-#[derive(Debug)]
 pub struct AppSettings {
     focus_handle: FocusHandle,
     setting_modal: Entity<SettingsModal>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl AppSettings {
@@ -161,29 +200,27 @@ impl AppSettings {
 
         Self {
             focus_handle: cx.focus_handle(),
+            _subscriptions: vec![cx.subscribe(&setting_modal, Self::on_setting_modal_event)],
             setting_modal,
         }
     }
 
+    fn on_setting_modal_event(_: Entity<SettingsModal>, event: &SettingsModalEvent, cx: &mut App) {
+        match event {
+            SettingsModalEvent::SaveSettings(settings) => {
+                AppState::global_mut(cx).settings = settings.clone();
+                settings.save();
+            }
+        }
+    }
     fn show_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let setting_modal = self.setting_modal.clone();
         window.open_modal(cx, move |modal, _window, _cx| {
             modal
                 .title("全局设置")
-                .content_center()
                 .overlay(true)
-                .overlay_closable(true)
+                .overlay_closable(false)
                 .child(setting_modal.clone())
-                .footer(|_, _, _, _| {
-                    vec![
-                        Button::new("save").label("保存设置").primary(),
-                        Button::new("cancel").label("取消").danger().on_click(
-                            move |_, window, cx| {
-                                window.close_modal(cx);
-                            },
-                        ),
-                    ]
-                })
         });
     }
 }

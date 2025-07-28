@@ -6,9 +6,9 @@ pub mod state;
 pub mod themes;
 pub mod title_bar;
 
-use gpui::{App, ClickEvent, Entity, Subscription, Window, div, prelude::*};
+use gpui::{App, Axis, ClickEvent, Entity, Subscription, Window, div, prelude::*};
 use gpui_component::{
-    ActiveTheme as _, ContextModal, Root,
+    ActiveTheme as _, ContextModal, Root, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
     notification::Notification,
@@ -183,12 +183,15 @@ impl Render for LiveRecoderApp {
                             .child(
                                 // 房间列表卡片
                                 div()
+                                    .flex_1()
                                     .rounded_lg()
                                     .p_4()
                                     .border(gpui::px(1.0))
                                     .border_color(cx.theme().border)
                                     .child(
                                         v_flex()
+                                            .flex_1()
+                                            .scrollable(Axis::Vertical)
                                             .gap_4()
                                             .child(
                                                 h_flex()
@@ -206,12 +209,11 @@ impl Render for LiveRecoderApp {
                                             .child({
                                                 if !state.room_entities.is_empty() {
                                                     v_flex()
-                                                        .gap_3()
+                                                        .gap_y_3()
                                                         .children(state.room_entities.to_vec())
                                                 } else {
                                                     div()
                                                         .p_8()
-                                                        .flex_1()
                                                         .justify_center()
                                                         .items_center()
                                                         .child(Text::String("暂无录制房间".into()))

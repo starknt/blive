@@ -16,6 +16,8 @@ use std::{fmt, path::Path, sync::LazyLock};
 pub const APP_NAME: &str = "blive";
 pub const DISPLAY_NAME: &str = "B站录播姬";
 pub const DEFAULT_RECORD_NAME: &str = "{up_name}_{room_id}_{datetime}";
+pub const DEFAULT_VIDEO_FORMAT: VideoFormat = VideoFormat::FLV;
+pub const DEFAULT_VIDEO_CODEC: StreamCodec = StreamCodec::AVC;
 
 static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
@@ -60,6 +62,49 @@ static DEFAULT_RECORD_DIR: LazyLock<String> = LazyLock::new(|| {
 });
 
 const DEFAULT_THEME: &str = "Catppuccin Mocha";
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum VideoFormat {
+    #[strum(serialize = "flv")]
+    FLV,
+    #[default]
+    #[strum(serialize = "fmp4")]
+    FMP4,
+    #[strum(serialize = "ts")]
+    TS,
+}
+
+impl VideoFormat {
+    pub fn ext(&self, codec: &StreamCodec) -> &str {
+        // 根据codec和format确定视频文件扩展名
+        match self {
+            VideoFormat::FLV => match codec {
+                StreamCodec::AVC => "flv",
+                StreamCodec::HEVC => "flv",
+            },
+            VideoFormat::FMP4 => match codec {
+                StreamCodec::AVC => "mp4",
+                StreamCodec::HEVC => "mp4",
+            },
+            VideoFormat::TS => match codec {
+                StreamCodec::AVC => "ts",
+                StreamCodec::HEVC => "ts",
+            },
+        }
+    }
+}
+
+impl fmt::Display for VideoFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VideoFormat::FLV => write!(f, "flv"),
+            VideoFormat::FMP4 => write!(f, "fmp4"),
+            VideoFormat::TS => write!(f, "ts"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum RecordQuality {
@@ -108,6 +153,8 @@ impl RecordQuality {
 }
 
 #[derive(Debug, Clone, Default, Copy, Deserialize, Serialize, PartialEq, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum StreamCodec {
     #[default]
     #[strum(serialize = "avc")]
@@ -131,7 +178,7 @@ pub struct GlobalSettings {
     /// 录制质量
     pub quality: RecordQuality,
     /// 录制格式
-    pub format: String,
+    pub format: VideoFormat,
     /// 录制编码
     pub codec: StreamCodec,
     pub record_dir: String,
@@ -169,8 +216,8 @@ impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
             quality: RecordQuality::Original,
-            format: "flv".to_string(),
-            codec: StreamCodec::HEVC,
+            format: DEFAULT_VIDEO_FORMAT,
+            codec: DEFAULT_VIDEO_CODEC,
             record_dir: DEFAULT_RECORD_DIR.to_owned(),
             theme_name: DEFAULT_THEME.into(),
             rooms: vec![],
@@ -185,7 +232,7 @@ pub struct RoomSettings {
     /// 录制质量
     pub quality: Option<RecordQuality>,
     /// 录制格式
-    pub format: Option<String>,
+    pub format: Option<VideoFormat>,
     /// 录制编码
     pub codec: Option<StreamCodec>,
     /// 录制名称 {up_name}_{room_id}_{datetime}

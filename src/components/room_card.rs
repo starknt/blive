@@ -4,7 +4,7 @@ use crate::{
         room::{LiveRoomInfoData, LiveStatus},
         user::LiveUserInfo,
     },
-    settings::{DEFAULT_RECORD_NAME, RoomSettings, StreamCodec},
+    settings::{DEFAULT_RECORD_NAME, RoomSettings},
     state::AppState,
 };
 use chrono::NaiveDateTime;
@@ -18,10 +18,10 @@ use gpui::{
     px,
 };
 use gpui_component::{
-    ActiveTheme as _,
+    ActiveTheme as _, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
-    text::{Text, TextView},
+    text::Text,
     v_flex,
 };
 use leon::Values;
@@ -212,8 +212,14 @@ impl RoomCard {
         let record_dir = global_setting.record_dir;
 
         cx.spawn(async move |cx| {
-            if let Ok(data) = client.get_live_room_stream_url(room_info.room_id, global_setting.quality.to_quality()).await
-                && let Some(info) = data.playurl_info
+            let room_stream_info = client.get_live_room_stream_url(room_info.room_id, global_setting.quality.to_quality()).await;
+
+            if room_stream_info.is_err() {
+                println!("获取直播流失败{room_stream_info:?}");
+                return Err(anyhow::anyhow!("Failed to get room stream info"));
+            }
+
+            if let Some(info) = room_stream_info.unwrap().playurl_info
             {
                 let stream = info
                     .playurl
@@ -227,35 +233,36 @@ impl RoomCard {
                         card.error_message = Some("未找到合适的直播流".to_string());
                     });
 
-                    return Err(anyhow::anyhow!("Failed to get stream"));
+                    return Err(anyhow::anyhow!("未找到合适的直播流"));
                 }
 
                 // 1. 优先选择配置中的格式
-                let format_stream = {
-                    let format_stream = stream.unwrap()
-                        .format
-                        .iter()
-                        .find(|format| format.format_name.as_str() == global_setting.format.as_str());
+                let mut format_stream = stream.unwrap()
+                .format
+                .iter()
+                .find(|format| format.format_name == global_setting.format);
 
-                    if format_stream.is_none() {
-                        let _ = task_card.update(cx, |card, _| {
-                            card.status = RoomCardStatus::Error;
-                            card.error_message = Some("未找到合适的直播流".to_string());
-                        });
+                if format_stream.is_none() {
+                    format_stream = stream.unwrap().format.first();
+                }
 
-                        return Err(anyhow::anyhow!("Failed to get stream"));
-                    }
+                if format_stream.is_none() {
+                    let _ = task_card.update(cx, |card, _| {
+                        card.status = RoomCardStatus::Error;
+                        card.error_message = Some("未找到合适的视频格式".to_string());
+                    });
 
-                    format_stream.unwrap_or_else(|| stream.unwrap().format.first().unwrap())
-                };
+                    return Err(anyhow::anyhow!("未找到合适的视频格式"));
+                }
 
+                let format_stream = format_stream.unwrap();
                 if format_stream.codec.is_empty() {
                     let _ = task_card.update(cx, |card, _| {
                         card.status = RoomCardStatus::Error;
-                        card.error_message = Some("未找到合适的直播流".to_string());
+                        card.error_message = Some("未找到合适的视频编码".to_string());
                     });
 
-                    return Err(anyhow::anyhow!("Failed to get stream"));
+                    return Err(anyhow::anyhow!("未找到合适的视频编码"));
                 }
 
                 // 2. 优先按照设置选择编码格式 avc 或者 hevc
@@ -281,12 +288,7 @@ impl RoomCard {
                     room_area_name: room_info.area_name.clone(),
                     date: live_time.format("%Y-%m-%d").to_string(),
                 };
-                let ext = match format_stream.format_name.as_str() {
-                    "flv" => "flv",
-                    "ts" => "m4s",
-                    "fmp4" => "m4s",
-                    _ => "mp4",
-                };
+                let ext = format_stream.format_name.ext(&codec.codec_name);
                 let file_name = template.render(&values).unwrap_or_default();
                 let file_path = format!("{record_dir}/{file_name}.{ext}");
 
@@ -311,10 +313,7 @@ impl RoomCard {
                         return Err(anyhow::anyhow!("Failed to download file"));
                     }
 
-                    let mut buffer = match global_setting.codec {
-                        StreamCodec::AVC => vec![0u8; 8192],
-                        StreamCodec::HEVC => vec![0u8; 16384],
-                    };
+                    let mut buffer = [0u8; 8192];
 
                     let mut stop = false;
                     let body = response.body_mut();
@@ -391,7 +390,7 @@ impl RoomCard {
             }
 
             Ok(())
-        }).detach();
+        }).detach_and_log_err(cx);
     }
 }
 
@@ -437,7 +436,14 @@ impl Render for RoomCard {
                                         // 房间信息
                                         v_flex()
                                             .gap_1()
-                                            .child(room_info.title.clone().into_element())
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .child(room_info.title.clone().into_element())
+                                                    .child(div().font_bold().child(Text::String(
+                                                        self.user_info.uname.clone().into(),
+                                                    ))),
+                                            )
                                             .child(
                                                 format!("房间号: {}", room_info.room_id)
                                                     .into_element(),
@@ -481,16 +487,54 @@ impl Render for RoomCard {
                                     ),
                             )
                             .child(
-                                v_flex().gap_2().child(
-                                    Button::new("删除")
-                                        .danger()
-                                        .label("删除")
-                                        .on_click(cx.listener(Self::on_delete)),
-                                ),
+                                h_flex()
+                                    .gap_2()
+                                    .child({
+                                        if self.status == RoomCardStatus::Recording {
+                                            h_flex().flex_1().children(vec![
+                                                Button::new("record")
+                                                    .primary()
+                                                    .label(match self.status {
+                                                        RoomCardStatus::Waiting => {
+                                                            "开始录制".into()
+                                                        }
+                                                        RoomCardStatus::Recording => {
+                                                            "停止录制".into()
+                                                        }
+                                                        RoomCardStatus::Error => format!(
+                                                            "错误: {}",
+                                                            self.error_message
+                                                                .clone()
+                                                                .unwrap_or_default()
+                                                        ),
+                                                    })
+                                                    .on_click(cx.listener(|card, _, _, cx| {
+                                                        card.status = match card.status {
+                                                            RoomCardStatus::Waiting => {
+                                                                RoomCardStatus::Recording
+                                                            }
+                                                            RoomCardStatus::Recording => {
+                                                                RoomCardStatus::Waiting
+                                                            }
+                                                            RoomCardStatus::Error => {
+                                                                RoomCardStatus::Waiting
+                                                            }
+                                                        };
+                                                        cx.notify();
+                                                    })),
+                                            ])
+                                        } else {
+                                            h_flex().flex_1()
+                                        }
+                                    })
+                                    .child(
+                                        Button::new("删除")
+                                            .danger()
+                                            .label("删除")
+                                            .on_click(cx.listener(Self::on_delete)),
+                                    ),
                             ),
                     )
-                    // render html description
-                    .child(TextView::html("description", room_info.description.clone()))
                     .child(
                         h_flex()
                             .gap_x_4()
@@ -500,47 +544,24 @@ impl Render for RoomCard {
                             ))
                             .child({
                                 if self.status == RoomCardStatus::Recording {
-                                    h_flex().flex_1().children(vec![
-                                        Button::new("record")
-                                            .primary()
-                                            .label(match self.status {
-                                                RoomCardStatus::Waiting => "开始录制".into(),
-                                                RoomCardStatus::Recording => "停止录制".into(),
-                                                RoomCardStatus::Error => format!(
-                                                    "错误: {}",
-                                                    self.error_message.clone().unwrap_or_default()
-                                                ),
-                                            })
-                                            .on_click(cx.listener(|card, _, _, cx| {
-                                                card.status = match card.status {
-                                                    RoomCardStatus::Waiting => {
-                                                        RoomCardStatus::Recording
-                                                    }
-                                                    RoomCardStatus::Recording => {
-                                                        RoomCardStatus::Waiting
-                                                    }
-                                                    RoomCardStatus::Error => {
-                                                        RoomCardStatus::Waiting
-                                                    }
-                                                };
-                                                cx.notify();
-                                            })),
-                                    ])
+                                    Text::String(
+                                        format!("直播开始时间: {}", room_info.live_time).into(),
+                                    )
                                 } else {
-                                    h_flex().flex_1()
+                                    Text::String("".into())
                                 }
                             }),
-                    ),
+                    )
+                    .children({
+                        if self.status == RoomCardStatus::Error {
+                            vec![
+                                Text::String(self.error_message.clone().unwrap_or_default().into())
+                                    .into_element(),
+                            ]
+                        } else {
+                            vec![]
+                        }
+                    }),
             )
-    }
-}
-
-impl Drop for RoomCard {
-    fn drop(&mut self) {
-        self.status = RoomCardStatus::Waiting;
-
-        for task in self._tasks.drain(..) {
-            task.detach();
-        }
     }
 }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::settings::StreamCodec;
+use crate::settings::{StreamCodec, VideoFormat};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct LiveRoomStreamUrl {
@@ -69,7 +69,7 @@ pub struct PlayStream {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PlayStreamFormat {
-    pub format_name: String,
+    pub format_name: VideoFormat,
     pub codec: Vec<StreamCodecInfo>,
 }
 

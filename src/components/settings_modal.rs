@@ -1,5 +1,5 @@
 use crate::{
-    settings::{GlobalSettings, RecordQuality, StreamCodec},
+    settings::{GlobalSettings, RecordQuality, StreamCodec, VideoFormat},
     state::AppState,
 };
 use gpui::{App, ClickEvent, Entity, EventEmitter, Subscription, Window, prelude::*};
@@ -70,7 +70,7 @@ impl SettingsModal {
                 cx,
             );
 
-            state.set_selected_value(&global_settings.format.clone(), window, cx);
+            state.set_selected_value(&global_settings.format.to_string(), window, cx);
 
             state
         });
@@ -150,7 +150,12 @@ impl SettingsModal {
         };
 
         if let Some(format) = format {
-            self.global_settings.format = format.to_string();
+            self.global_settings.format = match format.as_str() {
+                "flv" => VideoFormat::FLV,
+                "fmp4" => VideoFormat::FMP4,
+                "ts" => VideoFormat::TS,
+                _ => VideoFormat::FMP4,
+            };
         }
 
         if let Some(codec) = codec {

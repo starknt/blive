@@ -18,7 +18,7 @@ fn main() {
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("gpui_component=trace".parse().unwrap())
                 .add_directive("reqwest_client=trace".parse().unwrap())
-                .add_directive("recoder=trace".parse().unwrap()),
+                .add_directive("blive=trace".parse().unwrap()),
         )
         .init();
 

@@ -4,7 +4,7 @@ use crate::{
         room::{LiveRoomInfoData, LiveStatus},
         user::LiveUserInfo,
     },
-    settings::{DEFAULT_RECORD_NAME, RoomSettings},
+    settings::{DEFAULT_RECORD_NAME, RoomSettings, StreamCodec},
     state::AppState,
 };
 use chrono::NaiveDateTime;
@@ -30,7 +30,7 @@ use std::{
     borrow::Cow,
     io::{ErrorKind, Write},
 };
-use std::{fs::File, sync::Arc, time::Duration};
+use std::{fs::File, time::Duration};
 
 #[derive(Clone, Debug)]
 enum RoomCardEvent {
@@ -101,206 +101,17 @@ impl RoomCard {
         }
     }
 
-    fn do_record(this: Entity<RoomCard>, cx: &mut App) {
-        let task_card = this.downgrade();
-        let card = this.read(cx);
-        let room_info = card.room_info.clone();
-        let user_info = card.user_info.clone();
-        let room_settings = card.settings.clone();
-        let client = Arc::clone(&AppState::global(cx).client);
-        let http_client = cx.http_client().clone();
-        let global_setting = AppState::global(cx).settings.clone();
-        let record_dir = global_setting.record_dir;
-
-        cx.spawn(async move |cx| {
-            if let Ok(data) = client.get_live_room_stream_url(room_info.room_id, global_setting.quality.to_quality()).await
-                && let Some(info) = data.playurl_info
-            {
-                let stream = info
-                    .playurl
-                    .stream
-                    .iter()
-                    .find(|stream| stream.protocol_name == "http_stream");
-
-                if stream.is_none() || stream.unwrap().format.is_empty() {
-                    let _ = task_card.update(cx, |card, _| {
-                        card.status = RoomCardStatus::Error;
-                        card.error_message = Some("未找到合适的直播流".to_string());
-                    });
-
-                    return Err(anyhow::anyhow!("Failed to get stream"));
-                }
-
-                // 1. 优先选择配置中的格式
-                let format_stream = {
-                    let format_stream = stream.unwrap()
-                        .format
-                        .iter()
-                        .find(|format| format.format_name.as_str() == global_setting.format.as_str());
-
-                    if format_stream.is_none() {
-                        let _ = task_card.update(cx, |card, _| {
-                            card.status = RoomCardStatus::Error;
-                            card.error_message = Some("未找到合适的直播流".to_string());
-                        });
-
-                        return Err(anyhow::anyhow!("Failed to get stream"));
-                    }
-
-                    format_stream.unwrap_or_else(|| stream.unwrap().format.first().unwrap())
-                };
-
-                if format_stream.codec.is_empty() {
-                    let _ = task_card.update(cx, |card, _| {
-                        card.status = RoomCardStatus::Error;
-                        card.error_message = Some("未找到合适的直播流".to_string());
-                    });
-
-                    return Err(anyhow::anyhow!("Failed to get stream"));
-                }
-
-                // 2. 选择编码格式 avc 或者 hevc
-                let codec = &format_stream.codec[0];
-                // 随机选择
-                let info = &codec.url_info[rand::rng().random_range(0..codec.url_info.len())];
-                let url = format!("{}{}{}", info.host, codec.base_url, info.extra);
-
-                let template = leon::Template::parse(&room_settings.record_name)
-                    .unwrap_or(leon::Template::parse(DEFAULT_RECORD_NAME).unwrap());
-                // parse 2025-07-27 11:15:56 北京时间
-
-                let live_time = NaiveDateTime::parse_from_str(&room_info.live_time, "%Y-%m-%d %H:%M:%S").unwrap_or_default();
-                let live_time = live_time.and_local_timezone(Shanghai).unwrap();
-                let values = RoomCardValues {
-                    up_name: user_info.uname.clone(),
-                    room_id: room_info.room_id,
-                    datetime: live_time.format("%Y-%m-%d %H:%M").to_string(),
-                    room_title: room_info.title.clone(),
-                    room_description: room_info.description.clone(),
-                    room_area_name: room_info.area_name.clone(),
-                    date: live_time.format("%Y-%m-%d").to_string(),
-                };
-                let ext = match format_stream.format_name.as_str() {
-                    "flv" => "flv",
-                    "ts" => "m4s",
-                    "fmp4" => "m4s",
-                    _ => "mp4",
-                };
-                let file_name = template.render(&values).unwrap_or_default();
-                let file_path = format!("{record_dir}/{file_name}.{ext}");
-
-                // ensure the directory exists
-                std::fs::create_dir_all(&record_dir).unwrap_or_default();
-
-                if let Ok(mut file) = File::create(file_path) {
-                    let request = Request::builder()
-                        .uri(url)
-                        .header("Referer", "https://live.bilibili.com/")
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        .method(Method::GET)
-                        .body(AsyncBody::empty())?;
-                    let mut response = http_client.send(request).await?;
-
-                    if !response.status().is_success() {
-                        let _ = task_card.update(cx, |card, _| {
-                            card.status = RoomCardStatus::Error;
-                            card.error_message = Some("下载直播流时发生错误".to_string());
-                        });
-
-                        return Err(anyhow::anyhow!("Failed to download file"));
-                    }
-
-                    let mut buffer = [0u8; 8192]; // 8KB buffer
-                    let mut stop = false;
-                    let body = response.body_mut();
-
-                    loop {
-                        if let Ok(bytes_read) = body.read(&mut buffer).await {
-                            if bytes_read == 0 {
-                                return Ok(());
-                            }
-
-                            let write_result = file.write_all(&buffer[..bytes_read]);
-
-                            if let Err(e) = write_result {
-                                // 写入失败，可能是磁盘满了
-                                match e.kind() {
-                                  ErrorKind::StorageFull => {
-                                        let _ = task_card.update(cx, |card, _| {
-                                            card.status = RoomCardStatus::Error;
-                                            card.error_message = Some("磁盘空间不足".to_string());
-                                        });
-
-                                        return Err(anyhow::anyhow!("Disk space is full"));
-                                    },
-                                  ErrorKind::Interrupted => {
-                                    // 中断，继续写入
-                                    continue;
-                                  },
-                                  ErrorKind::WouldBlock => {
-                                    // 阻塞，等待写入
-                                    cx.background_executor().timer(Duration::from_millis(100)).await;
-                                  },
-                                  ErrorKind::BrokenPipe => {
-                                    // 管道破裂，停止写入
-                                    break;
-                                  },
-                                  _ => {
-                                    let _ = task_card.update(cx, |card, _| {
-                                        card.status = RoomCardStatus::Error;
-                                        card.error_message = Some("写入视频文件失败".to_string());
-                                    });
-
-                                    return Err(anyhow::anyhow!("Failed to write file"));
-                                  }
-                                }
-                            }
-
-                            // check record status
-                            let _ = task_card.update(cx, |card, _| {
-                                if card.status != RoomCardStatus::Recording {
-                                    stop = true;
-                                }
-                            });
-
-                            if stop {
-                                break;
-                            }
-                        } else {
-                            let _ = task_card.update(cx, |card, _| {
-                                card.status = RoomCardStatus::Error;
-                                card.error_message = Some("读取直播流时发生错误".to_string());
-                            });
-
-                            return Err(anyhow::anyhow!("Failed to read stream"));
-                        }
-                    }
-                } else {
-                    let _ = task_card.update(cx, |card, _| {
-                        card.status = RoomCardStatus::Error;
-                        card.error_message = Some("创建视频文件失败".to_string());
-                    });
-
-                    return Err(anyhow::anyhow!("Failed to create file"));
-                }
-            }
-
-            Ok(())
-        }).detach();
-    }
-
     pub fn view(
         room: LiveRoomInfoData,
         user: LiveUserInfo,
         settings: RoomSettings,
         cx: &mut App,
-        client: Arc<ApiClient>,
+        client: ApiClient,
     ) -> Entity<Self> {
         let room_id = room.room_id;
         let live_status = room.live_status;
 
         let card = cx.new(|cx| {
-            let client = Arc::clone(&client);
             let task = cx.spawn(async move |this: WeakEntity<RoomCard>, cx| {
                 while let Some(this) = this.upgrade() {
                     let room_info = client.get_live_room_info(room_id).await;
@@ -385,6 +196,202 @@ impl RoomCard {
                 .cloned()
                 .collect();
         });
+    }
+}
+
+impl RoomCard {
+    fn do_record(this: Entity<RoomCard>, cx: &mut App) {
+        let task_card = this.downgrade();
+        let card = this.read(cx);
+        let room_info = card.room_info.clone();
+        let user_info = card.user_info.clone();
+        let room_settings = card.settings.clone();
+        let client = AppState::global(cx).client.clone();
+        let http_client = cx.http_client().clone();
+        let global_setting = AppState::global(cx).settings.clone();
+        let record_dir = global_setting.record_dir;
+
+        cx.spawn(async move |cx| {
+            if let Ok(data) = client.get_live_room_stream_url(room_info.room_id, global_setting.quality.to_quality()).await
+                && let Some(info) = data.playurl_info
+            {
+                let stream = info
+                    .playurl
+                    .stream
+                    .iter()
+                    .find(|stream| stream.protocol_name == "http_stream");
+
+                if stream.is_none() || stream.unwrap().format.is_empty() {
+                    let _ = task_card.update(cx, |card, _| {
+                        card.status = RoomCardStatus::Error;
+                        card.error_message = Some("未找到合适的直播流".to_string());
+                    });
+
+                    return Err(anyhow::anyhow!("Failed to get stream"));
+                }
+
+                // 1. 优先选择配置中的格式
+                let format_stream = {
+                    let format_stream = stream.unwrap()
+                        .format
+                        .iter()
+                        .find(|format| format.format_name.as_str() == global_setting.format.as_str());
+
+                    if format_stream.is_none() {
+                        let _ = task_card.update(cx, |card, _| {
+                            card.status = RoomCardStatus::Error;
+                            card.error_message = Some("未找到合适的直播流".to_string());
+                        });
+
+                        return Err(anyhow::anyhow!("Failed to get stream"));
+                    }
+
+                    format_stream.unwrap_or_else(|| stream.unwrap().format.first().unwrap())
+                };
+
+                if format_stream.codec.is_empty() {
+                    let _ = task_card.update(cx, |card, _| {
+                        card.status = RoomCardStatus::Error;
+                        card.error_message = Some("未找到合适的直播流".to_string());
+                    });
+
+                    return Err(anyhow::anyhow!("Failed to get stream"));
+                }
+
+                // 2. 优先按照设置选择编码格式 avc 或者 hevc
+                let codec = format_stream.codec.iter()
+                    .find(|codec| codec.codec_name == global_setting.codec)
+                    .unwrap_or_else(|| format_stream.codec.first().unwrap());
+
+                // 随机选择 url
+                let info = &codec.url_info[rand::rng().random_range(0..codec.url_info.len())];
+                let url = format!("{}{}{}", info.host, codec.base_url, info.extra);
+
+                let template = leon::Template::parse(&room_settings.record_name)
+                    .unwrap_or(leon::Template::parse(DEFAULT_RECORD_NAME).unwrap());
+
+                let live_time = NaiveDateTime::parse_from_str(&room_info.live_time, "%Y-%m-%d %H:%M:%S").unwrap_or_default();
+                let live_time = live_time.and_local_timezone(Shanghai).unwrap();
+                let values = RoomCardValues {
+                    up_name: user_info.uname.clone(),
+                    room_id: room_info.room_id,
+                    datetime: live_time.format("%Y-%m-%d %H点%M分").to_string(),
+                    room_title: room_info.title.clone(),
+                    room_description: room_info.description.clone(),
+                    room_area_name: room_info.area_name.clone(),
+                    date: live_time.format("%Y-%m-%d").to_string(),
+                };
+                let ext = match format_stream.format_name.as_str() {
+                    "flv" => "flv",
+                    "ts" => "m4s",
+                    "fmp4" => "m4s",
+                    _ => "mp4",
+                };
+                let file_name = template.render(&values).unwrap_or_default();
+                let file_path = format!("{record_dir}/{file_name}.{ext}");
+
+                // ensure the directory exists
+                std::fs::create_dir_all(&record_dir).unwrap_or_default();
+
+                if let Ok(mut file) = File::create(file_path) {
+                    let request = Request::builder()
+                        .uri(url)
+                        .header("Referer", "https://live.bilibili.com/")
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .method(Method::GET)
+                        .body(AsyncBody::empty())?;
+                    let mut response = http_client.send(request).await?;
+
+                    if !response.status().is_success() {
+                        let _ = task_card.update(cx, |card, _| {
+                            card.status = RoomCardStatus::Error;
+                            card.error_message = Some("下载直播流时发生错误".to_string());
+                        });
+
+                        return Err(anyhow::anyhow!("Failed to download file"));
+                    }
+
+                    let mut buffer = match global_setting.codec {
+                        StreamCodec::AVC => vec![0u8; 8192],
+                        StreamCodec::HEVC => vec![0u8; 16384],
+                    };
+
+                    let mut stop = false;
+                    let body = response.body_mut();
+
+                    loop {
+                        if let Ok(bytes_read) = body.read(&mut buffer).await {
+                            if bytes_read == 0 {
+                                return Ok(());
+                            }
+
+                            let write_result = file.write_all(&buffer[..bytes_read]);
+
+                            if let Err(e) = write_result {
+                                // 写入失败，可能是磁盘满了
+                                match e.kind() {
+                                  ErrorKind::StorageFull => {
+                                        let _ = task_card.update(cx, |card, _| {
+                                            card.status = RoomCardStatus::Error;
+                                            card.error_message = Some("磁盘空间不足".to_string());
+                                        });
+
+                                        return Err(anyhow::anyhow!("Disk space is full"));
+                                    },
+                                  ErrorKind::Interrupted => {
+                                    // 中断，继续写入
+                                    continue;
+                                  },
+                                  ErrorKind::WouldBlock => {
+                                    // 阻塞，等待写入
+                                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                                  },
+                                  ErrorKind::BrokenPipe => {
+                                    // 管道破裂，停止写入
+                                    break;
+                                  },
+                                  _ => {
+                                    let _ = task_card.update(cx, |card, _| {
+                                        card.status = RoomCardStatus::Error;
+                                        card.error_message = Some("写入视频文件失败".to_string());
+                                    });
+
+                                    return Err(anyhow::anyhow!("Failed to write file"));
+                                  }
+                                }
+                            }
+
+                            // check record status
+                            let _ = task_card.update(cx, |card, _| {
+                                if card.status != RoomCardStatus::Recording {
+                                    stop = true;
+                                }
+                            });
+
+                            if stop {
+                                break;
+                            }
+                        } else {
+                            let _ = task_card.update(cx, |card, _| {
+                                card.status = RoomCardStatus::Error;
+                                card.error_message = Some("读取直播流时发生错误".to_string());
+                            });
+
+                            return Err(anyhow::anyhow!("Failed to read stream"));
+                        }
+                    }
+                } else {
+                    let _ = task_card.update(cx, |card, _| {
+                        card.status = RoomCardStatus::Error;
+                        card.error_message = Some("创建视频文件失败".to_string());
+                    });
+
+                    return Err(anyhow::anyhow!("Failed to create file"));
+                }
+            }
+
+            Ok(())
+        }).detach();
     }
 }
 

@@ -6,8 +6,6 @@ pub mod state;
 pub mod themes;
 pub mod title_bar;
 
-use std::sync::Arc;
-
 use gpui::{App, ClickEvent, Entity, Subscription, Window, div, prelude::*};
 use gpui_component::{
     ActiveTheme as _, ContextModal, Root,
@@ -36,7 +34,7 @@ impl LiveRecoderApp {
     pub fn init(cx: &mut App) {
         let state = AppState::global(cx);
         for settings in state.settings.rooms.clone() {
-            let client = Arc::clone(&state.client);
+            let client = state.client.clone();
             let room_id = settings.room_id;
             cx.spawn(async move |cx| {
                 let (room_data, user_data) = futures_util::join!(
@@ -96,7 +94,7 @@ impl LiveRecoderApp {
 impl LiveRecoderApp {
     fn add_recording(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.room_num > 0 {
-            let client = Arc::clone(&AppState::global(cx).client);
+            let client = AppState::global(cx).client.clone();
             let room_num = self.room_num;
 
             // 检查是否已经存在

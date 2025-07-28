@@ -107,6 +107,24 @@ impl RecordQuality {
     }
 }
 
+#[derive(Debug, Clone, Default, Copy, Deserialize, Serialize, PartialEq, strum::EnumString)]
+pub enum StreamCodec {
+    #[default]
+    #[strum(serialize = "avc")]
+    AVC,
+    #[strum(serialize = "hevc")]
+    HEVC,
+}
+
+impl fmt::Display for StreamCodec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StreamCodec::AVC => write!(f, "avc"),
+            StreamCodec::HEVC => write!(f, "hevc"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalSettings {
     pub theme_name: SharedString,
@@ -114,6 +132,8 @@ pub struct GlobalSettings {
     pub quality: RecordQuality,
     /// 录制格式
     pub format: String,
+    /// 录制编码
+    pub codec: StreamCodec,
     pub record_dir: String,
     pub rooms: Vec<RoomSettings>,
 }
@@ -150,6 +170,7 @@ impl Default for GlobalSettings {
         Self {
             quality: RecordQuality::Original,
             format: "flv".to_string(),
+            codec: StreamCodec::HEVC,
             record_dir: DEFAULT_RECORD_DIR.to_owned(),
             theme_name: DEFAULT_THEME.into(),
             rooms: vec![],
@@ -165,6 +186,8 @@ pub struct RoomSettings {
     pub quality: Option<RecordQuality>,
     /// 录制格式
     pub format: Option<String>,
+    /// 录制编码
+    pub codec: Option<StreamCodec>,
     /// 录制名称 {up_name}_{room_id}_{datetime}
     pub record_name: String,
 }
@@ -175,6 +198,7 @@ impl RoomSettings {
             room_id,
             quality: None,
             format: None,
+            codec: None,
             record_name: DEFAULT_RECORD_NAME.to_string(),
         }
     }
@@ -186,6 +210,7 @@ impl Default for RoomSettings {
             room_id: 0,
             quality: None,
             format: None,
+            codec: None,
             record_name: DEFAULT_RECORD_NAME.to_string(),
         }
     }
@@ -208,7 +233,11 @@ impl AppSettings {
         }
     }
 
-    fn on_setting_modal_event(_: Entity<SettingsModal>, event: &SettingsModalEvent, cx: &mut App) {
+    fn on_setting_modal_event(
+        _this: Entity<SettingsModal>,
+        event: &SettingsModalEvent,
+        cx: &mut App,
+    ) {
         match event {
             SettingsModalEvent::SaveSettings(settings) => {
                 AppState::global_mut(cx).settings = settings.clone();
@@ -216,6 +245,7 @@ impl AppSettings {
             }
         }
     }
+
     fn show_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let setting_modal = self.setting_modal.clone();
         window.open_modal(cx, move |modal, _window, _cx| {

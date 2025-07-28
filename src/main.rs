@@ -23,7 +23,12 @@ fn main() {
         .init();
 
     let app = Application::new().with_assets(Assets);
+
     let version = env!("CARGO_PKG_VERSION");
+
+    app.on_reopen(|cx| {
+        open_main_window(cx);
+    });
 
     app.run(move |cx| {
         gpui_component::init(cx);
@@ -61,47 +66,51 @@ fn main() {
 
         cx.activate(true);
 
-        let mut window_size = size(px(1600.0), px(900.0));
-        if let Some(display) = cx.primary_display() {
-            let display_size = display.bounds().size;
-            window_size.width = window_size.width.min(display_size.width * 0.85);
-            window_size.height = window_size.height.min(display_size.height * 0.85);
-        }
-        let window_bounds = Bounds::centered(None, window_size, cx);
-
-        cx.spawn(async move |cx| {
-            let options = WindowOptions {
-                app_id: Some(APP_NAME.into()),
-                window_bounds: Some(WindowBounds::Windowed(window_bounds)),
-                titlebar: Some(TitleBar::title_bar_options()),
-                window_min_size: Some(gpui::Size {
-                    width: px(640.),
-                    height: px(480.),
-                }),
-                kind: WindowKind::Normal,
-                #[cfg(not(target_os = "linux"))]
-                window_background: gpui::WindowBackgroundAppearance::Blurred,
-                #[cfg(target_os = "linux")]
-                window_background: gpui::WindowBackgroundAppearance::Transparent,
-                #[cfg(target_os = "linux")]
-                window_decorations: Some(gpui::WindowDecorations::Client),
-                ..Default::default()
-            };
-
-            let window = cx
-                .open_window(options, |window, cx| {
-                    let root = LiveRecoderApp::view(DISPLAY_NAME.into(), window, cx);
-
-                    cx.new(|cx| Root::new(root.into(), window, cx))
-                })
-                .expect("Failed to open window");
-
-            window
-                .update(cx, |_, window, _| {
-                    window.activate_window();
-                })
-                .expect("Failed to update window");
-        })
-        .detach();
+        open_main_window(cx);
     });
+}
+
+fn open_main_window(cx: &mut App) {
+    let mut window_size = size(px(1600.0), px(900.0));
+    if let Some(display) = cx.primary_display() {
+        let display_size = display.bounds().size;
+        window_size.width = window_size.width.min(display_size.width * 0.85);
+        window_size.height = window_size.height.min(display_size.height * 0.85);
+    }
+    let window_bounds = Bounds::centered(None, window_size, cx);
+
+    cx.spawn(async move |cx| {
+        let options = WindowOptions {
+            app_id: Some(APP_NAME.into()),
+            window_bounds: Some(WindowBounds::Windowed(window_bounds)),
+            titlebar: Some(TitleBar::title_bar_options()),
+            window_min_size: Some(gpui::Size {
+                width: px(640.),
+                height: px(480.),
+            }),
+            kind: WindowKind::Normal,
+            #[cfg(not(target_os = "linux"))]
+            window_background: gpui::WindowBackgroundAppearance::Blurred,
+            #[cfg(target_os = "linux")]
+            window_background: gpui::WindowBackgroundAppearance::Transparent,
+            #[cfg(target_os = "linux")]
+            window_decorations: Some(gpui::WindowDecorations::Client),
+            ..Default::default()
+        };
+
+        let window = cx
+            .open_window(options, |window, cx| {
+                let root = LiveRecoderApp::view(DISPLAY_NAME.into(), window, cx);
+
+                cx.new(|cx| Root::new(root.into(), window, cx))
+            })
+            .expect("Failed to open window");
+
+        window
+            .update(cx, |_, window, _| {
+                window.activate_window();
+            })
+            .expect("Failed to update window");
+    })
+    .detach();
 }

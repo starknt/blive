@@ -1,21 +1,50 @@
-use gpui::{App, Entity, Global};
-use std::sync::Arc;
+use gpui::{App, Entity, Global, Task, WeakEntity};
+use std::collections::HashMap;
 
 use crate::{api::ApiClient, components::RoomCard, settings::GlobalSettings};
 
+pub enum RecordingTaskStatus {
+    Idle,
+    Recording,
+    Paused,
+    Error(String),
+}
+
+pub struct RecordingTask {
+    pub status: RecordingTaskStatus,
+    pub task: Task<anyhow::Result<()>>,
+    pub entity: WeakEntity<RoomCard>,
+}
+
+impl RecordingTask {
+    pub fn new(entity: WeakEntity<RoomCard>, task: Task<anyhow::Result<()>>) -> Self {
+        Self {
+            entity,
+            task,
+            status: RecordingTaskStatus::Idle,
+        }
+    }
+
+    pub fn update_status(&mut self, status: RecordingTaskStatus) {
+        self.status = status;
+    }
+}
+
 pub struct AppState {
-    pub client: Arc<ApiClient>,
+    pub client: ApiClient,
     pub room_entities: Vec<Entity<RoomCard>>,
     pub settings: GlobalSettings,
+    pub recording_tasks: HashMap<u64, RecordingTask>,
 }
 
 impl AppState {
     pub fn init(cx: &mut App) {
-        let client = Arc::new(ApiClient::new(cx.http_client()));
+        let client = ApiClient::new(cx.http_client());
         let state = Self {
             client,
             room_entities: vec![],
             settings: GlobalSettings::load(),
+            recording_tasks: HashMap::new(),
         };
         cx.set_global::<AppState>(state);
     }

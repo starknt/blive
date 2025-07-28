@@ -48,7 +48,7 @@ fn main() {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
 
-        let icon = "resources/win/icon.ico";
+        let icon = "resources/icons/win/icon.ico";
         let icon = std::path::Path::new(icon);
 
         println!("cargo:rerun-if-changed={}", icon.display());

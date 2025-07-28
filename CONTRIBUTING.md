@@ -29,8 +29,8 @@
 
 3. **克隆项目**
    ```bash
-   git clone https://github.com/starknt/bilibili-recoder.git
-   cd bilibili-recoder
+   git clone https://github.com/starknt/blive.git
+   cd blive
    ```
 
 4. **验证环境**

@@ -31,8 +31,8 @@
 
 2. **克隆项目**
    ```bash
-   git clone https://github.com/starknt/bilibili-recoder.git
-   cd bilibili-recoder
+   git clone https://github.com/starknt/blive.git
+   cd blive
    ```
 
 3. **编译项目**
@@ -73,7 +73,7 @@
 ## 🏗️ 项目结构
 
 ```
-bilibili-recoder/
+blive/
 ├── src/
 │   ├── main.rs              # 程序入口
 │   ├── lib.rs               # 主应用逻辑
@@ -106,8 +106,8 @@ bilibili-recoder/
 
 1. **克隆项目**
    ```bash
-   git clone https://github.com/starknt/bilibili-recoder.git
-   cd bilibili-recoder
+   git clone https://github.com/starknt/blive.git
+   cd blive
    ```
 
 2. **安装依赖**
@@ -150,7 +150,7 @@ bilibili-recoder/
 
 如果您遇到任何问题或有改进建议，请通过以下方式联系我们：
 
-- 在 GitHub 上创建 [Issue](https://github.com/your-username/bilibili-recoder/issues)
+- 在 GitHub 上创建 [Issue](https://github.com/starknt/blive/issues)
 - 发送邮件至项目维护者
 
 ## 📄 更新日志
@@ -172,7 +172,7 @@ bilibili-recoder/
 
 ## 🌟 项目统计
 
-[![Star History Chart](https://api.star-history.com/svg?repos=starknt/bilibili-recoder&type=Date)](https://star-history.com/#starknt/bilibili-recoder&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=starknt/blive&type=Date)](https://star-history.com/#starknt/blive&Date)
 
 ---
 

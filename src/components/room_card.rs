@@ -215,7 +215,6 @@ impl RoomCard {
             let room_stream_info = client.get_live_room_stream_url(room_info.room_id, global_setting.quality.to_quality()).await;
 
             if room_stream_info.is_err() {
-                println!("获取直播流失败{room_stream_info:?}");
                 return Err(anyhow::anyhow!("Failed to get room stream info"));
             }
 

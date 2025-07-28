@@ -1,6 +1,7 @@
 pub mod api;
 pub mod assets;
 pub mod components;
+pub mod core;
 pub mod settings;
 pub mod state;
 pub mod themes;

@@ -9,7 +9,14 @@ permissions:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - name: CheckOut
         uses: actions/checkout@v4

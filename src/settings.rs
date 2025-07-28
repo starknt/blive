@@ -3,7 +3,9 @@ use crate::{
     state::AppState,
 };
 use directories::ProjectDirs;
-use gpui::{prelude::*, *};
+use gpui::{
+    App, Entity, FocusHandle, Focusable, SharedString, Subscription, Window, div, prelude::*,
+};
 use gpui_component::{
     ContextModal, IconName, Sizable,
     button::{Button, ButtonVariants},

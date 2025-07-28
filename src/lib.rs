@@ -8,83 +8,28 @@ pub mod title_bar;
 
 use std::sync::Arc;
 
-use futures_util::join;
-use gpui::{prelude::*, *};
+use gpui::{App, ClickEvent, Entity, Subscription, Window, div, prelude::*};
 use gpui_component::{
-    ActiveTheme as _, ContextModal, Disableable, Root,
+    ActiveTheme as _, ContextModal, Root,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{InputEvent, InputState, NumberInputEvent, StepAction, TextInput},
     notification::Notification,
     text::Text,
     v_flex,
 };
 
 use crate::{
-    components::RoomCard, settings::RoomSettings, state::AppState, title_bar::AppTitleBar,
+    components::{RoomCard, RoomInput, RoomInputEvent},
+    settings::RoomSettings,
+    state::AppState,
+    title_bar::AppTitleBar,
 };
 
 pub struct LiveRecoderApp {
     room_num: u64,
-    room_input: Entity<InputState>,
+    room_input: Entity<RoomInput>,
     title_bar: Entity<AppTitleBar>,
     _subscriptions: Vec<Subscription>,
-    lock: bool,
-}
-
-impl LiveRecoderApp {
-    fn on_room_input_change(
-        &mut self,
-        this: &Entity<InputState>,
-        event: &InputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.lock {
-            self.lock = false;
-            return;
-        }
-
-        if let InputEvent::Change(text) = event {
-            if let Ok(value) = text.parse::<u64>() {
-                self.room_num = value;
-            }
-
-            this.update(cx, |input, cx| {
-                self.lock = true;
-                input.set_value(self.room_num.to_string(), window, cx);
-            });
-        }
-    }
-
-    fn on_room_input_event(
-        &mut self,
-        this: &Entity<InputState>,
-        event: &NumberInputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            NumberInputEvent::Step(step_action) => match step_action {
-                StepAction::Decrement => {
-                    if self.room_num > 0 {
-                        self.room_num = self.room_num.saturating_sub(1);
-                    }
-
-                    this.update(cx, |input, cx| {
-                        input.set_value(self.room_num.to_string(), window, cx);
-                    });
-                }
-                StepAction::Increment => {
-                    self.room_num = self.room_num.saturating_add(1);
-
-                    this.update(cx, |input, cx| {
-                        input.set_value(self.room_num.to_string(), window, cx);
-                    });
-                }
-            },
-        }
-    }
 }
 
 impl LiveRecoderApp {
@@ -94,10 +39,11 @@ impl LiveRecoderApp {
             let client = Arc::clone(&state.client);
             let room_id = settings.room_id;
             cx.spawn(async move |cx| {
-                let (room_data, user_data) = join!(
+                let (room_data, user_data) = futures_util::join!(
                     client.get_live_room_info(room_id),
                     client.get_live_room_user_info(room_id)
                 );
+
                 if let Ok(room_data) = room_data
                     && let Ok(user_data) = user_data
                 {
@@ -117,30 +63,37 @@ impl LiveRecoderApp {
     fn new(title: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let title_bar = cx.new(|cx| AppTitleBar::new(title, window, cx));
         let room_num = 1804892069;
-        let room_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("请输入直播间房间号")
-                .default_value(room_num.to_string())
-        });
+        let room_input = RoomInput::view(room_num, window, cx);
 
-        let _subscriptions = vec![
-            cx.subscribe_in(&room_input, window, Self::on_room_input_change),
-            cx.subscribe_in(&room_input, window, Self::on_room_input_event),
-        ];
+        let _subscriptions = vec![cx.subscribe_in(&room_input, window, Self::on_room_input_change)];
 
         Self {
             room_num,
             room_input,
             title_bar,
             _subscriptions,
-            lock: false,
         }
     }
 
     pub fn view(title: String, window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self::new(title, window, cx))
     }
+}
 
+impl LiveRecoderApp {
+    fn on_room_input_change(
+        &mut self,
+        _: &Entity<RoomInput>,
+        event: &RoomInputEvent,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        let RoomInputEvent::RoomInputChange(room_num) = event;
+        self.room_num = *room_num;
+    }
+}
+
+impl LiveRecoderApp {
     fn add_recording(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.room_num > 0 {
             let client = Arc::clone(&AppState::global(cx).client);
@@ -161,10 +114,11 @@ impl LiveRecoderApp {
             }
 
             cx.spawn(async move |_, cx| {
-                let (room_data, user_data) = join!(
+                let (room_data, user_data) = futures_util::join!(
                     client.get_live_room_info(room_num),
                     client.get_live_room_user_info(room_num)
                 );
+
                 if let Ok(room_data) = room_data
                     && let Ok(user_data) = user_data
                 {
@@ -216,18 +170,13 @@ impl Render for LiveRecoderApp {
                                                     .max_w_128()
                                                     .gap_3()
                                                     .items_center()
-                                                    .child(
-                                                        div().flex_1().child(TextInput::new(
-                                                            &self.room_input,
-                                                        )),
-                                                    )
+                                                    .child(self.room_input.clone())
                                                     .child(
                                                         Button::new("添加录制")
                                                             .on_click(
                                                                 cx.listener(Self::add_recording),
                                                             )
                                                             .primary()
-                                                            .disabled(self.lock)
                                                             .child(Text::String("添加录制".into())),
                                                     ),
                                             ),

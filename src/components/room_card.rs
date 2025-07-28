@@ -11,14 +11,18 @@ use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
 use futures_util::AsyncReadExt;
 use gpui::{
+    App, ClickEvent, Entity, EventEmitter, ObjectFit, Subscription, Task, WeakEntity, Window, div,
     http_client::{AsyncBody, Method, Request},
+    img,
     prelude::*,
-    *,
+    px,
 };
 use gpui_component::{
+    ActiveTheme as _,
     button::{Button, ButtonVariants},
+    h_flex,
     text::{Text, TextView},
-    *,
+    v_flex,
 };
 use leon::Values;
 use rand::Rng;
@@ -44,6 +48,10 @@ pub enum RoomCardStatus {
 struct RoomCardValues {
     pub up_name: String,
     pub room_id: u64,
+    pub room_title: String,
+    pub room_description: String,
+    pub room_area_name: String,
+    pub date: String,
     pub datetime: String,
 }
 
@@ -53,6 +61,10 @@ impl Values for RoomCardValues {
             "up_name" => Some(Cow::Borrowed(&self.up_name)),
             "room_id" => Some(Cow::Owned(self.room_id.to_string())),
             "datetime" => Some(Cow::Borrowed(&self.datetime)),
+            "room_title" => Some(Cow::Borrowed(&self.room_title)),
+            "room_description" => Some(Cow::Borrowed(&self.room_description)),
+            "room_area_name" => Some(Cow::Borrowed(&self.room_area_name)),
+            "date" => Some(Cow::Borrowed(&self.date)),
             _ => None,
         }
     }
@@ -163,6 +175,10 @@ impl RoomCard {
                     up_name: user_info.uname.clone(),
                     room_id: room_info.room_id,
                     datetime: live_time.format("%Y-%m-%d %H:%M").to_string(),
+                    room_title: room_info.title.clone(),
+                    room_description: room_info.description.clone(),
+                    room_area_name: room_info.area_name.clone(),
+                    date: live_time.format("%Y-%m-%d").to_string(),
                 };
                 let ext = match format_stream.format_name.as_str() {
                     "flv" => "flv",

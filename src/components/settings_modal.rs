@@ -2,7 +2,7 @@ use crate::{
     settings::{GlobalSettings, RecordQuality},
     state::AppState,
 };
-use gpui::{prelude::*, *};
+use gpui::{App, ClickEvent, Entity, EventEmitter, Window, prelude::*};
 use gpui_component::{
     ContextModal,
     button::{Button, ButtonVariants},

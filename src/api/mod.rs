@@ -1,5 +1,4 @@
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures_util::AsyncReadExt;
 use gpui::http_client::{AsyncBody, HttpClient, Method, Request};
 use std::fmt::Debug;

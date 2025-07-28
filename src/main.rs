@@ -1,6 +1,11 @@
 use blive::settings::{APP_NAME, DISPLAY_NAME};
 use blive::{LiveRecoderApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
-use gpui::{prelude::*, *};
+use gpui::{
+    App, Application, Bounds, KeyBinding, WindowBounds, WindowKind, WindowOptions, actions,
+    prelude::*, px, size,
+};
+#[cfg(target_os = "macos")]
+use gpui::{Menu, MenuItem};
 use gpui_component::{Root, TitleBar, theme};
 use tracing_subscriber::prelude::*;
 

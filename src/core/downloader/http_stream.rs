@@ -1,14 +1,14 @@
+use crate::components::{RoomCard, RoomCardStatus};
 use crate::core::downloader::{DownloadConfig, DownloadStatus, Downloader};
 use crate::core::http_client::HttpClient;
 use anyhow::{Context, Result};
 use futures_util::AsyncReadExt;
 use gpui::http_client::{AsyncBody, Method, Request};
-use gpui::{AsyncApp, Task};
+use gpui::{AsyncApp, WeakEntity};
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
-/// HTTP流下载器
 #[derive(Debug)]
 pub struct HttpStreamDownloader {
     url: String,
@@ -16,19 +16,23 @@ pub struct HttpStreamDownloader {
     status: DownloadStatus,
     client: HttpClient,
     is_running: Arc<std::sync::atomic::AtomicBool>,
-    task: Option<Task<()>>,
+    entity: WeakEntity<RoomCard>,
 }
 
 impl HttpStreamDownloader {
-    /// 创建新的HTTP流下载器
-    pub fn new(url: String, config: DownloadConfig, client: HttpClient) -> Self {
+    pub fn new(
+        url: String,
+        config: DownloadConfig,
+        client: HttpClient,
+        entity: WeakEntity<RoomCard>,
+    ) -> Self {
         Self {
             url,
             config,
             status: DownloadStatus::NotStarted,
             client,
             is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            task: None,
+            entity,
         }
     }
 
@@ -73,7 +77,7 @@ impl Downloader for HttpStreamDownloader {
         let config = self.config.clone();
         let client = self.client.clone();
         let is_running = self.is_running.clone();
-
+        let entity = self.entity.clone();
         // 检查输出路径
         self.check_output_path()?;
 
@@ -81,14 +85,25 @@ impl Downloader for HttpStreamDownloader {
         self.status = DownloadStatus::Downloading;
         is_running.store(true, std::sync::atomic::Ordering::Relaxed);
 
-        let task = cx.background_executor().spawn(async move {
-            eprintln!("开始下载: {url}");
+        cx.spawn(async move |cx| {
+            #[cfg(debug_assertions)]
+            eprintln!("开始下载: {url} 到 {}", config.output_path);
             if let Err(e) = Self::download_stream(&url, &config, &client, &is_running).await {
+                #[cfg(debug_assertions)]
                 eprintln!("下载失败: {e}");
-            }
-        });
 
-        self.task = Some(task);
+                let _ = entity.update(cx, |card, cx| {
+                    card.status = RoomCardStatus::Error;
+                    card.error_message = Some(format!("下载失败: {e:?}"));
+                    cx.notify();
+                });
+
+                return Err(e);
+            }
+
+            Ok(())
+        })
+        .detach();
 
         Ok(())
     }
@@ -97,9 +112,7 @@ impl Downloader for HttpStreamDownloader {
         self.is_running
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.status = DownloadStatus::Paused;
-        if let Some(task) = self.task.take() {
-            task.detach();
-        }
+
         Ok(())
     }
 
@@ -118,6 +131,8 @@ impl HttpStreamDownloader {
     ) -> Result<()> {
         let request = Request::builder()
             .uri(url)
+            .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .header("Referer", "https://live.bilibili.com/")
             .method(Method::GET)
             .body(AsyncBody::empty())
             .context("Failed to build request")?;
@@ -135,23 +150,24 @@ impl HttpStreamDownloader {
         let mut buffer = [0; 8192];
 
         loop {
-            if let Ok(bytes_read) = body.read(&mut buffer).await {
-                if bytes_read == 0 {
-                    return Ok(());
-                }
+            match body.read(&mut buffer).await {
+                Ok(bytes_read) => {
+                    if bytes_read == 0 {
+                        return Ok(());
+                    }
 
-                let write_result = file.write_all(&buffer[..bytes_read]);
+                    let write_result = file.write_all(&buffer[..bytes_read]);
 
-                if let Err(e) = write_result {
-                    // 根据错误类型返回相应的 RecordError
-                    return Err(e.into());
-                }
+                    if let Err(e) = write_result {
+                        // 根据错误类型返回相应的 RecordError
+                        return Err(e.into());
+                    }
 
-                if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
-                    return Ok(());
+                    if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Ok(());
+                    }
                 }
-            } else {
-                return Err(anyhow::anyhow!("无法读取响应体"));
+                Err(e) => return Err(anyhow::anyhow!("无法读取响应体: {}", e)),
             }
         }
     }

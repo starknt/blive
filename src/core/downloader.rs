@@ -1,6 +1,7 @@
 pub mod http_hls;
 pub mod http_stream;
 
+use crate::components::RoomCard;
 use crate::core::downloader::{http_hls::HttpHlsDownloader, http_stream::HttpStreamDownloader};
 use crate::core::http_client::HttpClient;
 use crate::core::http_client::room::LiveRoomInfoData;
@@ -10,7 +11,7 @@ use crate::settings::{DEFAULT_RECORD_NAME, StreamCodec, VideoFormat};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
-use gpui::AsyncApp;
+use gpui::{AsyncApp, WeakEntity};
 use rand::Rng;
 use std::{borrow::Cow, time::Duration};
 
@@ -100,6 +101,7 @@ pub struct BilibiliDownloader {
     pub(crate) codec: StreamCodec,
     pub(crate) client: HttpClient,
     pub(crate) downloader: Option<DownloaderType>,
+    pub(crate) entity: WeakEntity<RoomCard>,
 }
 
 impl BilibiliDownloader {
@@ -109,6 +111,7 @@ impl BilibiliDownloader {
         format: VideoFormat,
         codec: StreamCodec,
         client: HttpClient,
+        entity: WeakEntity<RoomCard>,
     ) -> Self {
         Self {
             room_id,
@@ -117,6 +120,7 @@ impl BilibiliDownloader {
             codec,
             client,
             downloader: None,
+            entity,
         }
     }
 
@@ -213,7 +217,12 @@ impl BilibiliDownloader {
             timeout: 30,
             retry_count: 3,
         };
-        let http_downloader = HttpStreamDownloader::new(url.clone(), config, self.client.clone());
+        let http_downloader = HttpStreamDownloader::new(
+            url.clone(),
+            config,
+            self.client.clone(),
+            self.entity.clone(),
+        );
 
         Ok((url, DownloaderType::HttpStream(http_downloader)))
     }
@@ -377,6 +386,7 @@ impl BilibiliDownloader {
                     url,
                     config,
                     self.client.clone(),
+                    self.entity.clone(),
                 ))
             }
             DownloaderType::HttpHls(_) => {

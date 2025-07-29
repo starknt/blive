@@ -11,8 +11,8 @@ use crate::{
     state::AppState,
 };
 use gpui::{
-    App, ClickEvent, Entity, EventEmitter, ObjectFit, Subscription, Task, WeakEntity, Window, div,
-    img, prelude::*, px,
+    App, ClickEvent, Entity, EventEmitter, ObjectFit, Subscription, WeakEntity, Window, div, img,
+    prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme as _, StyledExt,
@@ -37,7 +37,6 @@ pub enum RoomCardStatus {
 }
 
 pub struct RoomCard {
-    pub(crate) _tasks: Vec<Task<()>>,
     pub(crate) status: RoomCardStatus,
     pub(crate) error_message: Option<String>,
     pub(crate) room_info: LiveRoomInfoData,
@@ -48,14 +47,8 @@ pub struct RoomCard {
 }
 
 impl RoomCard {
-    fn new(
-        room: LiveRoomInfoData,
-        user: LiveUserInfo,
-        settings: RoomSettings,
-        task: Task<()>,
-    ) -> Self {
+    fn new(room: LiveRoomInfoData, user: LiveUserInfo, settings: RoomSettings) -> Self {
         Self {
-            _tasks: vec![task],
             _subscriptions: vec![],
             status: match room.live_status {
                 LiveStatus::Live => RoomCardStatus::Recording,
@@ -80,7 +73,7 @@ impl RoomCard {
         let live_status = room.live_status;
 
         let card = cx.new(|cx| {
-            let task = cx.spawn(async move |this: WeakEntity<RoomCard>, cx| {
+            cx.spawn(async move |this: WeakEntity<RoomCard>, cx| {
                 while let Some(this) = this.upgrade() {
                     let room_info = client.get_live_room_info(room_id).await;
 
@@ -98,9 +91,10 @@ impl RoomCard {
                         .timer(Duration::from_secs(15))
                         .await;
                 }
-            });
+            })
+            .detach();
 
-            Self::new(room, user, settings, task)
+            Self::new(room, user, settings)
         });
 
         let subscriptions = vec![cx.subscribe(&card, Self::on_event)];
@@ -177,7 +171,6 @@ impl RoomCard {
         let card = this.read(cx);
         let room_info = card.room_info.clone();
         let user_info = card.user_info.clone();
-        let _room_settings = card.settings.clone();
         let client = AppState::global(cx).client.clone();
         let global_setting = AppState::global(cx).settings.clone();
         let record_dir = global_setting.record_dir;
@@ -190,6 +183,7 @@ impl RoomCard {
                 global_setting.format,
                 global_setting.codec,
                 client,
+                task_card.clone(),
             );
 
             // 开始下载

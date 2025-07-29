@@ -67,9 +67,9 @@ const DEFAULT_THEME: &str = "Catppuccin Mocha";
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum VideoFormat {
+    #[default]
     #[strum(serialize = "flv")]
     FLV,
-    #[default]
     #[strum(serialize = "fmp4")]
     FMP4,
     #[strum(serialize = "ts")]

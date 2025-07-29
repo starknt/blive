@@ -14,5 +14,8 @@ pub mod title_bar;
 // 重新导出主应用结构
 pub use app::BLiveApp;
 
-// 保留向后兼容的别名
-pub type LiveRecoderApp = BLiveApp;
+// 重新导出下载器
+pub use core::downloader::{
+    DownloadConfig, DownloadStatus, Downloader, http_hls::HttpHlsDownloader,
+    http_stream::HttpStreamDownloader,
+};

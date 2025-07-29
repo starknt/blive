@@ -3,16 +3,20 @@ use crate::core::downloader::{DownloadConfig, DownloadStatus, Downloader};
 use anyhow::{Context, Result};
 use futures_util::AsyncReadExt;
 use gpui::http_client::{AsyncBody, Method, Request};
+use gpui::{AsyncApp, Task};
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
 /// HTTP流下载器
+#[derive(Debug)]
 pub struct HttpStreamDownloader {
     url: String,
     config: DownloadConfig,
     status: DownloadStatus,
     client: HttpClient,
     is_running: Arc<std::sync::atomic::AtomicBool>,
+    task: Option<Task<()>>,
 }
 
 impl HttpStreamDownloader {
@@ -24,6 +28,7 @@ impl HttpStreamDownloader {
             status: DownloadStatus::NotStarted,
             client,
             is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            task: None,
         }
     }
 
@@ -63,10 +68,10 @@ impl HttpStreamDownloader {
 }
 
 impl Downloader for HttpStreamDownloader {
-    fn start(&mut self) -> Result<()> {
+    fn start(&mut self, cx: &mut AsyncApp) -> Result<()> {
         let url = self.url.clone();
-        let _config = self.config.clone();
-        let _client = self.client.clone();
+        let config = self.config.clone();
+        let client = self.client.clone();
         let is_running = self.is_running.clone();
 
         // 检查输出路径
@@ -76,12 +81,14 @@ impl Downloader for HttpStreamDownloader {
         self.status = DownloadStatus::Downloading;
         is_running.store(true, std::sync::atomic::Ordering::Relaxed);
 
-        // 启动异步下载任务
-        std::thread::spawn(move || {
-            // 这里我们使用同步的方式，因为GPUI的异步运行时可能不支持spawn
-            // 在实际应用中，应该通过GPUI的异步API来处理
+        let task = cx.background_executor().spawn(async move {
             eprintln!("开始下载: {url}");
+            if let Err(e) = Self::download_stream(&url, &config, &client, &is_running).await {
+                eprintln!("下载失败: {e}");
+            }
         });
+
+        self.task = Some(task);
 
         Ok(())
     }
@@ -90,6 +97,9 @@ impl Downloader for HttpStreamDownloader {
         self.is_running
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.status = DownloadStatus::Paused;
+        if let Some(task) = self.task.take() {
+            task.detach();
+        }
         Ok(())
     }
 
@@ -99,12 +109,12 @@ impl Downloader for HttpStreamDownloader {
 }
 
 impl HttpStreamDownloader {
-    /// 执行实际的下载任务
-    #[allow(dead_code)]
+    /// 执行实际的下载任务（静态方法）
     async fn download_stream(
         url: &str,
         config: &DownloadConfig,
         client: &HttpClient,
+        is_running: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<()> {
         let request = Request::builder()
             .uri(url)
@@ -122,14 +132,27 @@ impl HttpStreamDownloader {
 
         // 获取响应体
         let body = response.body_mut();
-        let mut buffer = Vec::new();
-        body.read_to_end(&mut buffer)
-            .await
-            .context("无法读取响应体")?;
+        let mut buffer = [0; 8192];
 
-        // 写入文件
-        std::io::copy(&mut buffer.as_slice(), &mut file).context("写入文件失败")?;
+        loop {
+            if let Ok(bytes_read) = body.read(&mut buffer).await {
+                if bytes_read == 0 {
+                    return Ok(());
+                }
 
-        Ok(())
+                let write_result = file.write_all(&buffer[..bytes_read]);
+
+                if let Err(e) = write_result {
+                    // 根据错误类型返回相应的 RecordError
+                    return Err(e.into());
+                }
+
+                if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Ok(());
+                }
+            } else {
+                return Err(anyhow::anyhow!("无法读取响应体"));
+            }
+        }
     }
 }

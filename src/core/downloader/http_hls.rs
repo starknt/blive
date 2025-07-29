@@ -3,16 +3,19 @@ use crate::core::downloader::{DownloadConfig, DownloadStatus, Downloader};
 use anyhow::{Context, Result};
 use futures_util::AsyncReadExt;
 use gpui::http_client::{AsyncBody, Method, Request};
+use gpui::{AsyncApp, Task};
 use std::path::Path;
 use std::sync::Arc;
 
 /// HLS下载器
+#[derive(Debug)]
 pub struct HttpHlsDownloader {
     playlist_url: String,
     config: DownloadConfig,
     status: DownloadStatus,
     client: HttpClient,
     is_running: Arc<std::sync::atomic::AtomicBool>,
+    task: Option<Task<()>>,
 }
 
 impl HttpHlsDownloader {
@@ -24,6 +27,7 @@ impl HttpHlsDownloader {
             status: DownloadStatus::NotStarted,
             client,
             is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            task: None,
         }
     }
 
@@ -77,10 +81,10 @@ impl HttpHlsDownloader {
 }
 
 impl Downloader for HttpHlsDownloader {
-    fn start(&mut self) -> Result<()> {
+    fn start(&mut self, cx: &mut AsyncApp) -> Result<()> {
         let playlist_url = self.playlist_url.clone();
-        let _config = self.config.clone();
-        let _client = self.client.clone();
+        let config = self.config.clone();
+        let client = self.client.clone();
         let is_running = self.is_running.clone();
 
         // 检查输出路径
@@ -90,12 +94,13 @@ impl Downloader for HttpHlsDownloader {
         self.status = DownloadStatus::Downloading;
         is_running.store(true, std::sync::atomic::Ordering::Relaxed);
 
-        // 启动异步下载任务
-        std::thread::spawn(move || {
-            // 这里我们使用同步的方式，因为GPUI的异步运行时可能不支持spawn
-            // 在实际应用中，应该通过GPUI的异步API来处理
-            eprintln!("开始下载HLS播放列表: {playlist_url}");
+        let task = cx.background_executor().spawn(async move {
+            if let Err(e) = Self::download_hls(&playlist_url, &config, &client).await {
+                eprintln!("下载失败: {e}");
+            }
         });
+
+        self.task = Some(task);
 
         Ok(())
     }
@@ -104,6 +109,9 @@ impl Downloader for HttpHlsDownloader {
         self.is_running
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.status = DownloadStatus::Paused;
+        if let Some(task) = self.task.take() {
+            task.detach();
+        }
         Ok(())
     }
 

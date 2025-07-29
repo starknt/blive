@@ -7,7 +7,6 @@ use tracing_subscriber::{
     fmt::{format::FmtSpan, time::SystemTime},
 };
 
-/// 日志管理器
 pub struct LoggerManager {
     log_file: Option<PathBuf>,
     log_level: Level,
@@ -110,7 +109,6 @@ impl Default for LoggerManager {
     }
 }
 
-/// 日志级别枚举
 #[derive(Debug, Clone, Copy)]
 pub enum LogLevel {
     Trace,

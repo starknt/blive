@@ -1,5 +1,5 @@
 use crate::{
-    settings::{GlobalSettings, RecordQuality, StreamCodec, VideoFormat},
+    settings::{GlobalSettings, Quality, StreamCodec, VideoContainer},
     state::AppState,
 };
 use gpui::{App, ClickEvent, Entity, EventEmitter, Subscription, Window, prelude::*};
@@ -45,13 +45,13 @@ impl SettingsModal {
         let quality_input = cx.new(|cx| {
             let mut state = DropdownState::new(
                 vec![
-                    RecordQuality::Dolby.to_string(),
-                    RecordQuality::UHD4K.to_string(),
-                    RecordQuality::Original.to_string(),
-                    RecordQuality::BlueRay.to_string(),
-                    RecordQuality::UltraHD.to_string(),
-                    RecordQuality::HD.to_string(),
-                    RecordQuality::Smooth.to_string(),
+                    Quality::Dolby.to_string(),
+                    Quality::UHD4K.to_string(),
+                    Quality::Original.to_string(),
+                    Quality::BlueRay.to_string(),
+                    Quality::UltraHD.to_string(),
+                    Quality::HD.to_string(),
+                    Quality::Smooth.to_string(),
                 ],
                 Some(0),
                 window,
@@ -138,24 +138,24 @@ impl SettingsModal {
         // 解析质量设置
         if let Some(quality_str) = quality_str {
             let quality = match quality_str.as_str() {
-                "杜比" => RecordQuality::Dolby,
-                "4K" => RecordQuality::UHD4K,
-                "原画" => RecordQuality::Original,
-                "蓝光" => RecordQuality::BlueRay,
-                "超清" => RecordQuality::UltraHD,
-                "高清" => RecordQuality::HD,
-                "流畅" => RecordQuality::Smooth,
-                _ => RecordQuality::Original,
+                "杜比" => Quality::Dolby,
+                "4K" => Quality::UHD4K,
+                "原画" => Quality::Original,
+                "蓝光" => Quality::BlueRay,
+                "超清" => Quality::UltraHD,
+                "高清" => Quality::HD,
+                "流畅" => Quality::Smooth,
+                _ => Quality::Original,
             };
             self.global_settings.quality = quality;
         };
 
         if let Some(format) = format {
             self.global_settings.format = match format.as_str() {
-                "flv" => VideoFormat::FLV,
-                "fmp4" => VideoFormat::FMP4,
-                "ts" => VideoFormat::TS,
-                _ => VideoFormat::FMP4,
+                "flv" => VideoContainer::FLV,
+                "fmp4" => VideoContainer::FMP4,
+                "ts" => VideoContainer::TS,
+                _ => VideoContainer::FMP4,
             };
         }
 

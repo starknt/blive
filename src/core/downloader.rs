@@ -7,7 +7,7 @@ use crate::core::http_client::HttpClient;
 use crate::core::http_client::room::LiveRoomInfoData;
 use crate::core::http_client::stream::{LiveRoomStreamUrl, PlayStream};
 use crate::core::http_client::user::LiveUserInfo;
-use crate::settings::{DEFAULT_RECORD_NAME, StreamCodec, VideoFormat};
+use crate::settings::{DEFAULT_RECORD_NAME, StreamCodec, VideoContainer};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
@@ -97,7 +97,7 @@ impl leon::Values for DownloaderFilenameTemplate {
 pub struct BilibiliDownloader {
     pub(crate) room_id: u64,
     pub(crate) quality: u32,
-    pub(crate) format: VideoFormat,
+    pub(crate) format: VideoContainer,
     pub(crate) codec: StreamCodec,
     pub(crate) client: HttpClient,
     pub(crate) downloader: Option<DownloaderType>,
@@ -108,7 +108,7 @@ impl BilibiliDownloader {
     pub fn new(
         room_id: u64,
         quality: u32,
-        format: VideoFormat,
+        format: VideoContainer,
         codec: StreamCodec,
         client: HttpClient,
         entity: WeakEntity<RoomCard>,

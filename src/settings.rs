@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, path::Path, sync::LazyLock};
 
 pub const APP_NAME: &str = "blive";
-pub const DISPLAY_NAME: &str = "B站录播姬";
+pub const DISPLAY_NAME: &str = "BLive";
 pub const DEFAULT_RECORD_NAME: &str = "{up_name}_{room_id}_{datetime}";
-pub const DEFAULT_VIDEO_FORMAT: VideoFormat = VideoFormat::FLV;
+pub const DEFAULT_VIDEO_FORMAT: VideoContainer = VideoContainer::FLV;
 pub const DEFAULT_VIDEO_CODEC: StreamCodec = StreamCodec::AVC;
 
 static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
@@ -66,7 +66,7 @@ const DEFAULT_THEME: &str = "Catppuccin Mocha";
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
-pub enum VideoFormat {
+pub enum VideoContainer {
     #[default]
     #[strum(serialize = "flv")]
     FLV,
@@ -76,19 +76,19 @@ pub enum VideoFormat {
     TS,
 }
 
-impl VideoFormat {
+impl VideoContainer {
     pub fn ext(&self, codec: &StreamCodec) -> &str {
         // 根据codec和format确定视频文件扩展名
         match self {
-            VideoFormat::FLV => match codec {
+            VideoContainer::FLV => match codec {
                 StreamCodec::AVC => "flv",
                 StreamCodec::HEVC => "flv",
             },
-            VideoFormat::FMP4 => match codec {
+            VideoContainer::FMP4 => match codec {
                 StreamCodec::AVC => "mp4",
                 StreamCodec::HEVC => "mp4",
             },
-            VideoFormat::TS => match codec {
+            VideoContainer::TS => match codec {
                 StreamCodec::AVC => "ts",
                 StreamCodec::HEVC => "ts",
             },
@@ -96,18 +96,18 @@ impl VideoFormat {
     }
 }
 
-impl fmt::Display for VideoFormat {
+impl fmt::Display for VideoContainer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VideoFormat::FLV => write!(f, "flv"),
-            VideoFormat::FMP4 => write!(f, "fmp4"),
-            VideoFormat::TS => write!(f, "ts"),
+            VideoContainer::FLV => write!(f, "flv"),
+            VideoContainer::FMP4 => write!(f, "fmp4"),
+            VideoContainer::TS => write!(f, "ts"),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum RecordQuality {
+pub enum Quality {
     // 杜比
     Dolby,
     // 4K
@@ -124,30 +124,30 @@ pub enum RecordQuality {
     Smooth,
 }
 
-impl fmt::Display for RecordQuality {
+impl fmt::Display for Quality {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RecordQuality::Dolby => write!(f, "杜比"),
-            RecordQuality::UHD4K => write!(f, "4K"),
-            RecordQuality::Original => write!(f, "原画"),
-            RecordQuality::BlueRay => write!(f, "蓝光"),
-            RecordQuality::UltraHD => write!(f, "超清"),
-            RecordQuality::HD => write!(f, "高清"),
-            RecordQuality::Smooth => write!(f, "流畅"),
+            Quality::Dolby => write!(f, "杜比"),
+            Quality::UHD4K => write!(f, "4K"),
+            Quality::Original => write!(f, "原画"),
+            Quality::BlueRay => write!(f, "蓝光"),
+            Quality::UltraHD => write!(f, "超清"),
+            Quality::HD => write!(f, "高清"),
+            Quality::Smooth => write!(f, "流畅"),
         }
     }
 }
 
-impl RecordQuality {
+impl Quality {
     pub fn to_quality(&self) -> u32 {
         match self {
-            RecordQuality::Dolby => 30000,
-            RecordQuality::UHD4K => 20000,
-            RecordQuality::Original => 10000,
-            RecordQuality::BlueRay => 400,
-            RecordQuality::UltraHD => 250,
-            RecordQuality::HD => 150,
-            RecordQuality::Smooth => 80,
+            Quality::Dolby => 30000,
+            Quality::UHD4K => 20000,
+            Quality::Original => 10000,
+            Quality::BlueRay => 400,
+            Quality::UltraHD => 250,
+            Quality::HD => 150,
+            Quality::Smooth => 80,
         }
     }
 }
@@ -176,9 +176,9 @@ impl fmt::Display for StreamCodec {
 pub struct GlobalSettings {
     pub theme_name: SharedString,
     /// 录制质量
-    pub quality: RecordQuality,
+    pub quality: Quality,
     /// 录制格式
-    pub format: VideoFormat,
+    pub format: VideoContainer,
     /// 录制编码
     pub codec: StreamCodec,
     pub record_dir: String,
@@ -215,7 +215,7 @@ impl GlobalSettings {
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
-            quality: RecordQuality::Original,
+            quality: Quality::Original,
             format: DEFAULT_VIDEO_FORMAT,
             codec: DEFAULT_VIDEO_CODEC,
             record_dir: DEFAULT_RECORD_DIR.to_owned(),
@@ -230,9 +230,9 @@ pub struct RoomSettings {
     /// 房间号
     pub room_id: u64,
     /// 录制质量
-    pub quality: Option<RecordQuality>,
+    pub quality: Option<Quality>,
     /// 录制格式
-    pub format: Option<VideoFormat>,
+    pub format: Option<VideoContainer>,
     /// 录制编码
     pub codec: Option<StreamCodec>,
     /// 录制名称 {up_name}_{room_id}_{datetime}

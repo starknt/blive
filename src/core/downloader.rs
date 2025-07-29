@@ -1,19 +1,18 @@
 pub mod http_hls;
 pub mod http_stream;
 
-use std::{borrow::Cow, time::Duration};
-
+use crate::core::downloader::{http_hls::HttpHlsDownloader, http_stream::HttpStreamDownloader};
+use crate::core::http_client::HttpClient;
+use crate::core::http_client::room::LiveRoomInfoData;
+use crate::core::http_client::stream::{LiveRoomStreamUrl, PlayStream};
+use crate::core::http_client::user::LiveUserInfo;
+use crate::settings::{DEFAULT_RECORD_NAME, StreamCodec, VideoFormat};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
 use gpui::AsyncApp;
 use rand::Rng;
-
-use crate::{
-    HttpHlsDownloader, HttpStreamDownloader,
-    api::{HttpClient, room::LiveRoomInfoData, stream::LiveRoomStreamUrl, user::LiveUserInfo},
-    settings::{DEFAULT_RECORD_NAME, StreamCodec, VideoFormat},
-};
+use std::{borrow::Cow, time::Duration};
 
 pub trait Downloader {
     /// 开始下载
@@ -179,10 +178,7 @@ impl BilibiliDownloader {
         anyhow::bail!("未找到合适的直播流协议");
     }
 
-    fn parse_http_stream(
-        &self,
-        stream: &crate::api::stream::PlayStream,
-    ) -> Result<(String, DownloaderType)> {
+    fn parse_http_stream(&self, stream: &PlayStream) -> Result<(String, DownloaderType)> {
         if stream.format.is_empty() {
             anyhow::bail!("未找到合适的直播流");
         }
@@ -222,10 +218,7 @@ impl BilibiliDownloader {
         Ok((url, DownloaderType::HttpStream(http_downloader)))
     }
 
-    fn parse_hls_stream(
-        &self,
-        stream: &crate::api::stream::PlayStream,
-    ) -> Result<(String, DownloaderType)> {
+    fn parse_hls_stream(&self, stream: &PlayStream) -> Result<(String, DownloaderType)> {
         if stream.format.is_empty() {
             anyhow::bail!("未找到合适的HLS流");
         }

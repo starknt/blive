@@ -1,6 +1,6 @@
 use blive::logger::create_default_logger;
 use blive::settings::{APP_NAME, DISPLAY_NAME};
-use blive::{BLiveApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
+use blive::{app::BLiveApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
 use gpui::{
     App, Application, Bounds, KeyBinding, WindowBounds, WindowKind, WindowOptions, actions,
     prelude::*, px, size,

@@ -1,5 +1,5 @@
-use crate::api::HttpClient;
 use crate::core::downloader::{DownloadConfig, DownloadStatus, Downloader};
+use crate::core::http_client::HttpClient;
 use anyhow::{Context, Result};
 use futures_util::AsyncReadExt;
 use gpui::http_client::{AsyncBody, Method, Request};

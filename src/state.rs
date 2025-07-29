@@ -1,7 +1,7 @@
 use gpui::{App, Entity, Global, Task, WeakEntity};
 use std::collections::HashMap;
 
-use crate::{api::HttpClient, components::RoomCard, settings::GlobalSettings};
+use crate::{components::RoomCard, core::HttpClient, settings::GlobalSettings};
 
 pub enum RecordingTaskStatus {
     Idle,

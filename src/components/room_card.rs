@@ -1,10 +1,12 @@
 use crate::{
-    api::{
+    core::{
         HttpClient,
-        room::{LiveRoomInfoData, LiveStatus},
-        user::LiveUserInfo,
+        downloader::BilibiliDownloader,
+        http_client::{
+            room::{LiveRoomInfoData, LiveStatus},
+            user::LiveUserInfo,
+        },
     },
-    core::downloader::BilibiliDownloader,
     settings::RoomSettings,
     state::AppState,
 };

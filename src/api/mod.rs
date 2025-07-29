@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use futures_util::AsyncReadExt;
-use gpui::http_client::{AsyncBody, HttpClient, Method, Request};
+use gpui::http_client::{AsyncBody, HttpClient as GPUIHttpClient, Method, Request, Response};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -14,13 +14,20 @@ pub struct BasicResponse<Data: Sized> {
     pub data: Data,
 }
 
-pub struct ApiClient {
-    inner: Arc<dyn HttpClient>,
+pub struct HttpClient {
+    inner: Arc<dyn GPUIHttpClient>,
 }
 
-impl ApiClient {
-    pub fn new(client: Arc<dyn HttpClient>) -> Self {
+impl HttpClient {
+    pub fn new(client: Arc<dyn GPUIHttpClient>) -> Self {
         Self { inner: client }
+    }
+
+    pub async fn send(&self, request: Request<AsyncBody>) -> Result<Response<AsyncBody>> {
+        self.inner
+            .send(request)
+            .await
+            .context("Failed to send request")
     }
 
     pub async fn get_live_room_info(&self, room_id: u64) -> Result<room::LiveRoomInfoData> {
@@ -112,7 +119,7 @@ impl ApiClient {
     }
 }
 
-impl Clone for ApiClient {
+impl Clone for HttpClient {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -120,45 +127,40 @@ impl Clone for ApiClient {
     }
 }
 
-impl Debug for ApiClient {
+impl Debug for HttpClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ApiClient")
+        write!(f, "HttpClient")
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use reqwest_client::ReqwestClient;
     use std::sync::Arc;
 
     #[tokio::test]
     async fn test_get_live_room_stream_url() {
-        let client =
-            Arc::new(reqwest_client::ReqwestClient::user_agent("LiveRecorder/0.1.0").unwrap());
-        let api_client = ApiClient::new(client);
+        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
+        let api_client = HttpClient::new(client);
         let res = api_client.get_live_room_stream_url(1804892069, 10000).await;
-
         println!("{res:#?}");
         assert!(res.is_ok());
     }
 
     #[tokio::test]
     async fn test_get_live_user_info() {
-        let client =
-            Arc::new(reqwest_client::ReqwestClient::user_agent("LiveRecorder/0.1.0").unwrap());
-        let api_client = ApiClient::new(client);
+        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
+        let api_client = HttpClient::new(client);
         let res = api_client.get_live_room_user_info(1804892069).await;
-
         assert!(res.is_ok());
     }
 
     #[tokio::test]
     async fn test_get_live_room_info() {
-        let client =
-            Arc::new(reqwest_client::ReqwestClient::user_agent("LiveRecorder/0.1.0").unwrap());
-        let api_client = ApiClient::new(client);
+        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
+        let api_client = HttpClient::new(client);
         let res = api_client.get_live_room_info(1804892069).await;
-
         assert!(res.is_ok());
     }
 }

@@ -1,5 +1,6 @@
+use blive::logger::create_default_logger;
 use blive::settings::{APP_NAME, DISPLAY_NAME};
-use blive::{LiveRecoderApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
+use blive::{BLiveApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
 use gpui::{
     App, Application, Bounds, KeyBinding, WindowBounds, WindowKind, WindowOptions, actions,
     prelude::*, px, size,
@@ -7,24 +8,17 @@ use gpui::{
 #[cfg(target_os = "macos")]
 use gpui::{Menu, MenuItem};
 use gpui_component::{Root, TitleBar, theme};
-use tracing_subscriber::prelude::*;
+use reqwest_client::ReqwestClient;
 
 actions!(menu, [Quit]);
 
 fn main() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .with(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("gpui_component=trace".parse().unwrap())
-                .add_directive("reqwest_client=trace".parse().unwrap())
-                .add_directive("blive=trace".parse().unwrap()),
-        )
-        .init();
+    // 初始化日志系统
+    let logger = create_default_logger().expect("无法创建日志管理器");
+    logger.init().expect("无法初始化日志系统");
+    logger.log_app_start(env!("CARGO_PKG_VERSION"));
 
     let app = Application::new().with_assets(Assets);
-
-    let version = env!("CARGO_PKG_VERSION");
 
     app.on_reopen(|cx| {
         open_main_window(cx);
@@ -33,15 +27,13 @@ fn main() {
     app.run(move |cx| {
         gpui_component::init(cx);
 
-        let http_client = std::sync::Arc::new(
-            reqwest_client::ReqwestClient::user_agent(&format!("{APP_NAME}/{version}")).unwrap(),
-        );
+        let http_client = std::sync::Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
         cx.set_http_client(http_client);
 
         AppState::init(cx);
         theme::init(cx);
         ThemeSwitcher::init(cx);
-        LiveRecoderApp::init(cx);
+        BLiveApp::init(cx);
 
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
 
@@ -53,6 +45,9 @@ fn main() {
             cx.read_global(|state: &AppState, _| {
                 state.settings.save();
             });
+
+            // 记录应用关闭日志
+            logger.log_app_shutdown();
 
             async {}
         })
@@ -100,7 +95,7 @@ fn open_main_window(cx: &mut App) {
 
         let window = cx
             .open_window(options, |window, cx| {
-                let root = LiveRecoderApp::view(DISPLAY_NAME.into(), window, cx);
+                let root = BLiveApp::view(DISPLAY_NAME.into(), window, cx);
 
                 cx.new(|cx| Root::new(root.into(), window, cx))
             })

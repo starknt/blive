@@ -1,6 +1,6 @@
 use crate::{
     api::{
-        ApiClient,
+        HttpClient,
         room::{LiveRoomInfoData, LiveStatus},
         stream::LiveRoomStreamUrl,
         user::LiveUserInfo,
@@ -13,7 +13,7 @@ use chrono_tz::Asia::Shanghai;
 use futures_util::AsyncReadExt;
 use gpui::{
     App, ClickEvent, Entity, EventEmitter, ObjectFit, Subscription, Task, WeakEntity, Window, div,
-    http_client::{AsyncBody, HttpClient, Method, Request},
+    http_client::{AsyncBody, HttpClient as GpuiHttpClient, Method, Request},
     img,
     prelude::*,
     px,
@@ -143,7 +143,7 @@ impl RoomCard {
         user: LiveUserInfo,
         settings: RoomSettings,
         cx: &mut App,
-        client: ApiClient,
+        client: HttpClient,
     ) -> Entity<Self> {
         let room_id = room.room_id;
         let live_status = room.live_status;
@@ -623,7 +623,7 @@ impl RoomCard {
     }
 
     async fn download_stream(
-        http_client: &Arc<dyn HttpClient>,
+        http_client: &Arc<dyn GpuiHttpClient>,
         url: &str,
         file: &mut File,
         task_card: &WeakEntity<RoomCard>,

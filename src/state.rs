@@ -1,7 +1,7 @@
 use gpui::{App, Entity, Global, Task, WeakEntity};
 use std::collections::HashMap;
 
-use crate::{api::ApiClient, components::RoomCard, settings::GlobalSettings};
+use crate::{api::HttpClient, components::RoomCard, settings::GlobalSettings};
 
 pub enum RecordingTaskStatus {
     Idle,
@@ -31,7 +31,7 @@ impl RecordingTask {
 }
 
 pub struct AppState {
-    pub client: ApiClient,
+    pub client: HttpClient,
     pub room_entities: Vec<Entity<RoomCard>>,
     pub settings: GlobalSettings,
     pub recording_tasks: HashMap<u64, RecordingTask>,
@@ -39,7 +39,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn init(cx: &mut App) {
-        let client = ApiClient::new(cx.http_client());
+        let client = HttpClient::new(cx.http_client());
         let state = Self {
             client,
             room_entities: vec![],

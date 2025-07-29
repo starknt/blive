@@ -2,6 +2,7 @@ use crate::{
     api::{
         ApiClient,
         room::{LiveRoomInfoData, LiveStatus},
+        stream::LiveRoomStreamUrl,
         user::LiveUserInfo,
     },
     settings::{DEFAULT_RECORD_NAME, RoomSettings},
@@ -12,7 +13,7 @@ use chrono_tz::Asia::Shanghai;
 use futures_util::AsyncReadExt;
 use gpui::{
     App, ClickEvent, Entity, EventEmitter, ObjectFit, Subscription, Task, WeakEntity, Window, div,
-    http_client::{AsyncBody, Method, Request},
+    http_client::{AsyncBody, HttpClient, Method, Request},
     img,
     prelude::*,
     px,
@@ -26,11 +27,47 @@ use gpui_component::{
 };
 use leon::Values;
 use rand::Rng;
+use std::sync::Arc;
 use std::{
     borrow::Cow,
     io::{ErrorKind, Write},
 };
 use std::{fs::File, time::Duration};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum RecordError {
+    #[error("网络错误: {0}")]
+    NetworkError(#[from] anyhow::Error),
+
+    #[error("致命错误 - 磁盘空间不足")]
+    FatalError,
+
+    #[error("致命错误 - 创建文件失败: {0}")]
+    FileCreationError(String),
+
+    #[error("致命错误 - 写入文件失败: {0}")]
+    FileWriteError(String),
+
+    #[error("未找到合适的直播流")]
+    NoStreamFound,
+
+    #[error("未找到合适的视频格式")]
+    NoFormatFound,
+
+    #[error("未找到合适的视频编码")]
+    NoCodecFound,
+}
+
+impl From<std::io::Error> for RecordError {
+    fn from(err: std::io::Error) -> Self {
+        match err.kind() {
+            ErrorKind::StorageFull => RecordError::FatalError,
+            ErrorKind::Interrupted => RecordError::NetworkError(anyhow::anyhow!("操作被中断")),
+            _ => RecordError::FileWriteError(err.to_string()),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 enum RoomCardEvent {
@@ -212,14 +249,46 @@ impl RoomCard {
         let record_dir = global_setting.record_dir;
 
         cx.spawn(async move |cx| {
-            let room_stream_info = client.get_live_room_stream_url(room_info.room_id, global_setting.quality.to_quality()).await;
+            let mut retry_count = 0;
+            let max_retries = 5;
 
-            if room_stream_info.is_err() {
-                return Err(anyhow::anyhow!("Failed to get room stream info"));
-            }
+            // 重试获取流地址，因为认证信息会过期
+            let room_stream_info = loop {
+                match client
+                    .get_live_room_stream_url(
+                        room_info.room_id,
+                        global_setting.quality.to_quality(),
+                    )
+                    .await
+                {
+                    Ok(stream_info) => break Ok(stream_info),
+                    Err(e) => {
+                        retry_count += 1;
+                        if retry_count >= max_retries {
+                            let _ = task_card.update(cx, |card, _| {
+                                card.status = RoomCardStatus::Error;
+                                card.error_message =
+                                    Some("获取直播流地址失败，重试次数已达上限".to_string());
+                            });
+                            break Err(RecordError::NetworkError(anyhow::anyhow!(
+                                "Failed to get room stream info: {}",
+                                e
+                            )));
+                        }
 
-            if let Some(info) = room_stream_info.unwrap().playurl_info
-            {
+                        // 指数退避重试
+                        let delay = Duration::from_secs(2_u64.pow(retry_count as u32));
+                        cx.background_executor().timer(delay).await;
+                    }
+                }
+            };
+
+            let room_stream_info = match room_stream_info {
+                Ok(info) => info,
+                Err(e) => return Err(e),
+            };
+
+            if let Some(info) = room_stream_info.playurl_info {
                 let stream = info
                     .playurl
                     .stream
@@ -232,14 +301,15 @@ impl RoomCard {
                         card.error_message = Some("未找到合适的直播流".to_string());
                     });
 
-                    return Err(anyhow::anyhow!("未找到合适的直播流"));
+                    return Err(RecordError::NoStreamFound);
                 }
 
                 // 1. 优先选择配置中的格式
-                let mut format_stream = stream.unwrap()
-                .format
-                .iter()
-                .find(|format| format.format_name == global_setting.format);
+                let mut format_stream = stream
+                    .unwrap()
+                    .format
+                    .iter()
+                    .find(|format| format.format_name == global_setting.format);
 
                 if format_stream.is_none() {
                     format_stream = stream.unwrap().format.first();
@@ -251,7 +321,7 @@ impl RoomCard {
                         card.error_message = Some("未找到合适的视频格式".to_string());
                     });
 
-                    return Err(anyhow::anyhow!("未找到合适的视频格式"));
+                    return Err(RecordError::NoFormatFound);
                 }
 
                 let format_stream = format_stream.unwrap();
@@ -261,22 +331,26 @@ impl RoomCard {
                         card.error_message = Some("未找到合适的视频编码".to_string());
                     });
 
-                    return Err(anyhow::anyhow!("未找到合适的视频编码"));
+                    return Err(RecordError::NoCodecFound);
                 }
 
                 // 2. 优先按照设置选择编码格式 avc 或者 hevc
-                let codec = format_stream.codec.iter()
+                let codec = format_stream
+                    .codec
+                    .iter()
                     .find(|codec| codec.codec_name == global_setting.codec)
                     .unwrap_or_else(|| format_stream.codec.first().unwrap());
 
                 // 随机选择 url
                 let info = &codec.url_info[rand::rng().random_range(0..codec.url_info.len())];
-                let url = format!("{}{}{}", info.host, codec.base_url, info.extra);
+                let mut url = format!("{}{}{}", info.host, codec.base_url, info.extra);
 
                 let template = leon::Template::parse(&room_settings.record_name)
                     .unwrap_or(leon::Template::parse(DEFAULT_RECORD_NAME).unwrap());
 
-                let live_time = NaiveDateTime::parse_from_str(&room_info.live_time, "%Y-%m-%d %H:%M:%S").unwrap_or_default();
+                let live_time =
+                    NaiveDateTime::parse_from_str(&room_info.live_time, "%Y-%m-%d %H:%M:%S")
+                        .unwrap_or_default();
                 let live_time = live_time.and_local_timezone(Shanghai).unwrap();
                 let values = RoomCardValues {
                     up_name: user_info.uname.clone(),
@@ -294,88 +368,243 @@ impl RoomCard {
                 // ensure the directory exists
                 std::fs::create_dir_all(&record_dir).unwrap_or_default();
 
-                if let Ok(mut file) = File::create(file_path) {
-                    let request = Request::builder()
-                        .uri(url)
-                        .header("Referer", "https://live.bilibili.com/")
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        .method(Method::GET)
-                        .body(AsyncBody::empty())?;
-                    let mut response = http_client.send(request).await?;
+                // 检查文件是否存在，如果存在则重命名
+                let mut final_file_path = file_path.clone();
+                let mut part_number = 1;
 
-                    if !response.status().is_success() {
-                        let _ = task_card.update(cx, |card, _| {
-                            card.status = RoomCardStatus::Error;
-                            card.error_message = Some("下载直播流时发生错误".to_string());
-                        });
+                while std::path::Path::new(&final_file_path).exists() {
+                    // 创建文件夹（去掉扩展名）
+                    let file_stem = std::path::Path::new(&file_name)
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy();
+                    let folder_path = format!("{record_dir}/{file_stem}");
 
-                        return Err(anyhow::anyhow!("Failed to download file"));
+                    // 创建文件夹
+                    std::fs::create_dir_all(&folder_path).unwrap_or_default();
+
+                    // 检查文件夹中已有的文件，找到下一个可用的编号
+                    let folder = std::fs::read_dir(&folder_path).unwrap_or_else(|_| {
+                        std::fs::create_dir_all(&folder_path).unwrap_or_default();
+                        std::fs::read_dir(&folder_path).unwrap_or_else(|_| {
+                            panic!("无法创建或读取文件夹: {folder_path}");
+                        })
+                    });
+
+                    let mut existing_parts = Vec::new();
+                    for entry in folder.flatten() {
+                        if let Some(file_name) = entry.file_name().to_string_lossy().strip_suffix(&format!(".{ext}"))
+                            && let Some(part_str) = file_name.strip_suffix(&format!("_P{part_number}"))
+                                && part_str == file_stem {
+                                    existing_parts.push(part_number);
+                                }
                     }
 
-                    let mut buffer = [0u8; 8192];
+                    // 找到下一个可用的编号
+                    while existing_parts.contains(&part_number) {
+                        part_number += 1;
+                    }
 
-                    let mut stop = false;
-                    let body = response.body_mut();
+                    // 重命名旧文件
+                    let old_file_path = final_file_path.clone();
+                    let new_file_name = format!("{file_stem}_P{part_number}.{ext}");
+                    let new_file_path = format!("{folder_path}/{new_file_name}");
+
+                    if let Err(e) = std::fs::rename(&old_file_path, &new_file_path) {
+                        let _ = task_card.update(cx, |card, _| {
+                            card.status = RoomCardStatus::Error;
+                            card.error_message = Some(format!("重命名文件失败: {e}"));
+                        });
+                        return Err(RecordError::FileCreationError(format!("重命名文件失败: {e}")));
+                    }
+
+                    // 更新文件路径为新的编号
+                    final_file_path = format!("{folder_path}/{file_stem}_P{}.{ext}", part_number + 1);
+                    part_number += 1;
+                }
+
+                if let Ok(mut file) = File::create(&final_file_path) {
+                    let mut download_retry_count = 0;
+                    let max_download_retries = 3;
 
                     loop {
-                        if let Ok(bytes_read) = body.read(&mut buffer).await {
-                            if bytes_read == 0 {
-                                return Ok(());
-                            }
-
-                            let write_result = file.write_all(&buffer[..bytes_read]);
-
-                            if let Err(e) = write_result {
-                                // 写入失败，可能是磁盘满了
-                                match e.kind() {
-                                  ErrorKind::StorageFull => {
-                                        let _ = task_card.update(cx, |card, _| {
-                                            card.status = RoomCardStatus::Error;
-                                            card.error_message = Some("磁盘空间不足".to_string());
-                                        });
-
-                                        return Err(anyhow::anyhow!("Disk space is full"));
-                                    },
-                                  ErrorKind::Interrupted => {
-                                    // 中断，继续写入
-                                    continue;
-                                  },
-                                  ErrorKind::WouldBlock => {
-                                    // 阻塞，等待写入
-                                    cx.background_executor().timer(Duration::from_millis(100)).await;
-                                  },
-                                  ErrorKind::BrokenPipe => {
-                                    // 管道破裂，停止写入
-                                    break;
-                                  },
-                                  _ => {
-                                    let _ = task_card.update(cx, |card, _| {
-                                        card.status = RoomCardStatus::Error;
-                                        card.error_message = Some("写入视频文件失败".to_string());
-                                    });
-
-                                    return Err(anyhow::anyhow!("Failed to write file"));
-                                  }
-                                }
-                            }
-
-                            // check record status
-                            let _ = task_card.update(cx, |card, _| {
-                                if card.status != RoomCardStatus::Recording {
-                                    stop = true;
-                                }
-                            });
-
-                            if stop {
+                        match Self::download_stream(&http_client, &url, &mut file, &task_card, cx)
+                            .await
+                        {
+                            Ok(_) => {
+                                // 下载成功，退出循环
                                 break;
                             }
-                        } else {
-                            let _ = task_card.update(cx, |card, _| {
-                                card.status = RoomCardStatus::Error;
-                                card.error_message = Some("读取直播流时发生错误".to_string());
-                            });
+                            Err(RecordError::FatalError) => {
+                                // 致命错误，立即停止
+                                let _ = task_card.update(cx, |card, _| {
+                                    card.status = RoomCardStatus::Error;
+                                    card.error_message = Some("磁盘空间不足".to_string());
+                                });
+                                return Err(RecordError::FatalError);
+                            }
+                            Err(RecordError::FileCreationError(_)) => {
+                                // 文件创建失败，致命错误
+                                let _ = task_card.update(cx, |card, _| {
+                                    card.status = RoomCardStatus::Error;
+                                    card.error_message = Some("创建视频文件失败".to_string());
+                                });
+                                return Err(RecordError::FileCreationError(
+                                    "创建文件失败".to_string(),
+                                ));
+                            }
+                            Err(RecordError::FileWriteError(_)) => {
+                                // 文件写入失败，致命错误
+                                let _ = task_card.update(cx, |card, _| {
+                                    card.status = RoomCardStatus::Error;
+                                    card.error_message = Some("写入视频文件失败".to_string());
+                                });
+                                return Err(RecordError::FileWriteError(
+                                    "写入文件失败".to_string(),
+                                ));
+                            }
+                            Err(
+                                RecordError::NoStreamFound
+                                | RecordError::NoFormatFound
+                                | RecordError::NoCodecFound,
+                            ) => {
+                                // 配置错误，不重试
+                                return Err(RecordError::NoStreamFound);
+                            }
+                            Err(RecordError::NetworkError(_)) => {
+                                // 网络错误，重新获取流信息并重试
+                                download_retry_count += 1;
+                                if download_retry_count >= max_download_retries {
+                                    let _ = task_card.update(cx, |card, _| {
+                                        card.status = RoomCardStatus::Error;
+                                        card.error_message =
+                                            Some("下载直播流失败，重试次数已达上限".to_string());
+                                    });
+                                    return Err(RecordError::NetworkError(anyhow::anyhow!(
+                                        "下载直播流失败，重试次数已达上限"
+                                    )));
+                                }
 
-                            return Err(anyhow::anyhow!("Failed to read stream"));
+                                // 重新获取流信息
+                                let _ = task_card.update(cx, |card, _| {
+                                    card.error_message = Some(format!(
+                                        "重新获取流信息 (第{download_retry_count}次重试)"
+                                    ));
+                                });
+
+                                let new_stream_info: Result<LiveRoomStreamUrl, anyhow::Error> = loop {
+                                    match client.get_live_room_stream_url(room_info.room_id, global_setting.quality.to_quality()).await {
+                                        Ok(stream_info) => break Ok(stream_info),
+                                        Err(_e) => {
+                                            // 如果获取新流信息也失败，等待后重试
+                                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                                            continue;
+                                        }
+                                    }
+                                };
+
+                                if let Ok(new_stream_info) = new_stream_info
+                                    && let Some(new_info) = new_stream_info.playurl_info {
+                                        let new_stream = new_info
+                                            .playurl
+                                            .stream
+                                            .iter()
+                                            .find(|stream| stream.protocol_name == "http_stream");
+
+                                        if let Some(new_stream) = new_stream {
+                                            let mut new_format_stream = new_stream
+                                                .format
+                                                .iter()
+                                                .find(|format| format.format_name == global_setting.format);
+
+                                            if new_format_stream.is_none() {
+                                                new_format_stream = new_stream.format.first();
+                                            }
+
+                                            if let Some(new_format_stream) = new_format_stream
+                                                && !new_format_stream.codec.is_empty() {
+                                                    let new_codec = new_format_stream.codec.iter()
+                                                        .find(|codec| codec.codec_name == global_setting.codec)
+                                                        .unwrap_or_else(|| new_format_stream.codec.first().unwrap());
+
+                                                    let new_url_info = &new_codec.url_info[rand::rng().random_range(0..new_codec.url_info.len())];
+                                                    let new_url = format!("{}{}{}", new_url_info.host, new_codec.base_url, new_url_info.extra);
+
+                                                    // 更新 URL 并重新创建文件
+                                                    let new_file_path = format!("{record_dir}/{file_name}.{ext}");
+
+                                                    // 检查新文件是否存在，如果存在则重命名
+                                                    let mut new_final_file_path = new_file_path.clone();
+                                                    let mut new_part_number = 1;
+
+                                                    while std::path::Path::new(&new_final_file_path).exists() {
+                                                        // 创建文件夹（去掉扩展名）
+                                                        let file_stem = std::path::Path::new(&file_name)
+                                                            .file_stem()
+                                                            .unwrap_or_default()
+                                                            .to_string_lossy();
+                                                        let folder_path = format!("{record_dir}/{file_stem}");
+
+                                                        // 创建文件夹
+                                                        std::fs::create_dir_all(&folder_path).unwrap_or_default();
+
+                                                        // 检查文件夹中已有的文件，找到下一个可用的编号
+                                                        let folder = std::fs::read_dir(&folder_path).unwrap_or_else(|_| {
+                                                            std::fs::create_dir_all(&folder_path).unwrap_or_default();
+                                                            std::fs::read_dir(&folder_path).unwrap_or_else(|_| {
+                                                                panic!("无法创建或读取文件夹: {folder_path}");
+                                                            })
+                                                        });
+
+                                                        let mut existing_parts = Vec::new();
+                                                        for entry in folder.flatten() {
+                                                            if let Some(file_name) = entry.file_name().to_string_lossy().strip_suffix(&format!(".{ext}"))
+                                                                && let Some(part_str) = file_name.strip_suffix(&format!("_P{new_part_number}"))
+                                                                    && part_str == file_stem {
+                                                                        existing_parts.push(new_part_number);
+                                                                    }
+                                                        }
+
+                                                        // 找到下一个可用的编号
+                                                        while existing_parts.contains(&new_part_number) {
+                                                            new_part_number += 1;
+                                                        }
+
+                                                        // 重命名旧文件
+                                                        let old_file_path = new_final_file_path.clone();
+                                                        let new_file_name = format!("{file_stem}_P{new_part_number}.{ext}");
+                                                        let new_file_path = format!("{folder_path}/{new_file_name}");
+
+                                                        if let Err(e) = std::fs::rename(&old_file_path, &new_file_path) {
+                                                            let _ = task_card.update(cx, |card, _| {
+                                                                card.status = RoomCardStatus::Error;
+                                                                card.error_message = Some(format!("重命名文件失败: {e}"));
+                                                            });
+                                                            return Err(RecordError::FileCreationError(format!("重命名文件失败: {e}")));
+                                                        }
+
+                                                        // 更新文件路径为新的编号
+                                                        new_final_file_path = format!("{folder_path}/{file_stem}_P{}.{ext}", new_part_number + 1);
+                                                        new_part_number += 1;
+                                                    }
+
+                                                    if let Ok(new_file) = File::create(&new_final_file_path) {
+                                                        file = new_file;
+                                                        // 更新 URL 变量，继续下载循环
+                                                        url = new_url;
+                                                        continue;
+                                                    }
+                                                }
+                                        }
+                                    }
+
+                                // 如果重新获取流信息失败，等待后重试下载
+                                cx.background_executor()
+                                    .timer(Duration::from_secs(
+                                        2_u64.pow(download_retry_count as u32),
+                                    ))
+                                    .await;
+                            }
                         }
                     }
                 } else {
@@ -384,12 +613,76 @@ impl RoomCard {
                         card.error_message = Some("创建视频文件失败".to_string());
                     });
 
-                    return Err(anyhow::anyhow!("Failed to create file"));
+                    return Err(RecordError::FileCreationError("创建文件失败".to_string()));
                 }
             }
 
             Ok(())
-        }).detach_and_log_err(cx);
+        })
+        .detach_and_log_err(cx);
+    }
+
+    async fn download_stream(
+        http_client: &Arc<dyn HttpClient>,
+        url: &str,
+        file: &mut File,
+        task_card: &WeakEntity<RoomCard>,
+        cx: &mut gpui::AsyncApp,
+    ) -> Result<(), RecordError> {
+        let request = Request::builder()
+            .uri(url)
+            .header("Referer", "https://live.bilibili.com/")
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .method(Method::GET)
+            .body(AsyncBody::empty())
+            .map_err(|e| RecordError::NetworkError(anyhow::anyhow!("Failed to build request: {}", e)))?;
+
+        let mut response = http_client.send(request).await.map_err(|e| {
+            RecordError::NetworkError(anyhow::anyhow!("Failed to send request: {}", e))
+        })?;
+
+        if !response.status().is_success() {
+            return Err(RecordError::NetworkError(anyhow::anyhow!(
+                "HTTP request failed with status: {}",
+                response.status()
+            )));
+        }
+
+        let mut buffer = [0u8; 8192];
+        let mut stop = false;
+        let body = response.body_mut();
+
+        loop {
+            if let Ok(bytes_read) = body.read(&mut buffer).await {
+                if bytes_read == 0 {
+                    return Ok(());
+                }
+
+                let write_result = file.write_all(&buffer[..bytes_read]);
+
+                if let Err(e) = write_result {
+                    // 根据错误类型返回相应的 RecordError
+                    return Err(e.into());
+                }
+
+                // check record status
+                let _ = task_card.update(cx, |card, _| {
+                    if card.status != RoomCardStatus::Recording {
+                        stop = true;
+                    }
+                });
+
+                if stop {
+                    break;
+                }
+            } else {
+                return Err(RecordError::NetworkError(anyhow::anyhow!(
+                    "Failed to read stream"
+                )));
+            }
+        }
+
+        Ok(())
     }
 }
 

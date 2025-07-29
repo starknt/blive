@@ -39,6 +39,7 @@ impl SettingsModal {
             InputState::new(window, cx)
                 .placeholder("录制目录路径")
                 .default_value(global_settings.record_dir.clone())
+                .disabled(true)
         });
 
         let quality_input = cx.new(|cx| {

@@ -61,7 +61,8 @@ impl HttpHlsDownloader {
             .set_video_codec(match config.codec {
                 StreamCodec::AVC => "h264",
                 StreamCodec::HEVC => "hevc",
-            });
+            })
+            .set_format("matroska");
 
         let ctx = FfmpegContext::builder()
             .input(input)

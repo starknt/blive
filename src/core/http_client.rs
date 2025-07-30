@@ -141,7 +141,50 @@ mod test {
     use ffmpeg_sidecar::command::FfmpegCommand;
     use rand::Rng;
     use reqwest_client::ReqwestClient;
-    use std::sync::Arc;
+    use std::{fs::File, io::Write, sync::Arc};
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_download_m3u8_file() {
+        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
+        let client = HttpClient::new(client);
+        let res = client.get_live_room_stream_url(3044248, 10000).await;
+
+        let stream = res.unwrap();
+        let playurl_info = stream.playurl_info.unwrap();
+        let stream = playurl_info
+            .playurl
+            .stream
+            .iter()
+            .find(|stream| stream.protocol_name == LiveProtocol::HttpHLS)
+            .unwrap();
+        let stream = stream
+            .format
+            .iter()
+            .find(|f| f.format_name == VideoContainer::TS)
+            .unwrap();
+        let stream = stream
+            .codec
+            .iter()
+            .find(|c| c.codec_name == StreamCodec::HEVC)
+            .unwrap();
+        let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
+        let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
+        println!("url: {url}");
+        let mut file = File::create("test.m3u8").unwrap();
+        let mut response = client
+            .send(
+                Request::builder()
+                    .uri(url)
+                    .body(AsyncBody::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await.unwrap();
+        file.write_all(body.as_bytes()).unwrap();
+    }
 
     #[tokio::test]
     #[ignore]

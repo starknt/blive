@@ -1,7 +1,7 @@
 pub mod http_hls;
 pub mod http_stream;
 
-use crate::components::RoomCard;
+use crate::components::{RoomCard, RoomCardStatus};
 use crate::core::downloader::{http_hls::HttpHlsDownloader, http_stream::HttpStreamDownloader};
 use crate::core::http_client::HttpClient;
 use crate::core::http_client::room::LiveRoomInfoData;
@@ -119,6 +119,10 @@ pub struct BLiveDownloader {
     pub(crate) client: HttpClient,
     pub(crate) downloader: Option<DownloaderType>,
     pub(crate) entity: WeakEntity<RoomCard>,
+    // 网络重连相关字段
+    pub(crate) max_reconnect_attempts: u32,
+    pub(crate) reconnect_delay: Duration,
+    pub(crate) is_auto_reconnect: bool,
 }
 
 impl BLiveDownloader {
@@ -138,13 +142,42 @@ impl BLiveDownloader {
             client,
             downloader: None,
             entity,
+            max_reconnect_attempts: u32::MAX,        // 无限重试
+            reconnect_delay: Duration::from_secs(1), // 初始延迟1秒
+            is_auto_reconnect: true,                 // 是否启用自动重连
+        }
+    }
+
+    /// 设置重连参数
+    pub fn set_reconnect_config(
+        &mut self,
+        max_attempts: u32,
+        initial_delay: Duration,
+        auto_reconnect: bool,
+    ) {
+        self.max_reconnect_attempts = max_attempts;
+        self.reconnect_delay = initial_delay;
+        self.is_auto_reconnect = auto_reconnect;
+    }
+
+    /// 计算指数退避延迟，最大等待时间30分钟
+    fn calculate_backoff_delay(&self, retry_count: u32) -> Duration {
+        const MAX_DELAY: Duration = Duration::from_secs(30 * 60); // 30分钟
+
+        // 指数退避：1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 1800(30分钟)
+        let exponential_delay = self.reconnect_delay * (2_u32.pow(retry_count.min(10)));
+
+        // 限制最大延迟为30分钟
+        if exponential_delay > MAX_DELAY {
+            MAX_DELAY
+        } else {
+            exponential_delay
         }
     }
 
     /// 获取直播流信息
     async fn get_stream_info(&self) -> Result<LiveRoomStreamUrl> {
         let mut retry_count = 0;
-        let max_retries = 5;
 
         loop {
             match self
@@ -155,12 +188,13 @@ impl BLiveDownloader {
                 Ok(stream_info) => return Ok(stream_info),
                 Err(e) => {
                     retry_count += 1;
-                    if retry_count >= max_retries {
-                        anyhow::bail!("获取直播流地址失败，重试次数已达上限: {}", e);
-                    }
+                    let delay = self.calculate_backoff_delay(retry_count);
 
-                    // 指数退避重试
-                    let delay = Duration::from_secs(2_u64.pow(retry_count as u32));
+                    eprintln!(
+                        "获取直播流地址失败，正在重试 (第{retry_count}次，等待{delay:?}): {e}"
+                    );
+
+                    // 使用指数退避重试，无限重试
                     std::thread::sleep(delay);
                 }
             }
@@ -445,6 +479,189 @@ impl BLiveDownloader {
 
         // 保存下载器引用
         self.downloader = Some(final_downloader);
+
+        Ok(())
+    }
+
+    /// 检查是否为网络相关错误
+    fn is_network_error(error: &anyhow::Error) -> bool {
+        let error_str = error.to_string().to_lowercase();
+
+        // 检查常见的网络错误关键词
+        error_str.contains("network")
+            || error_str.contains("connection")
+            || error_str.contains("timeout")
+            || error_str.contains("dns")
+            || error_str.contains("socket")
+            || error_str.contains("unreachable")
+            || error_str.contains("reset")
+            || error_str.contains("refused")
+            || error_str.contains("无法连接")
+            || error_str.contains("连接被重置")
+            || error_str.contains("连接超时")
+            || error_str.contains("网络")
+            || error_str.contains("请求失败")
+            || error_str.contains("无法读取响应体")
+    }
+
+    /// 带重连的下载方法
+    pub async fn start_download_with_retry(
+        &mut self,
+        cx: &mut AsyncApp,
+        room_info: &LiveRoomInfoData,
+        user_info: &LiveUserInfo,
+        record_dir: &str,
+    ) -> Result<()> {
+        let mut retry_count = 0;
+
+        loop {
+            match self
+                .start_download(cx, room_info, user_info, record_dir)
+                .await
+            {
+                Ok(_) => {
+                    // 下载成功启动，现在监控下载状态
+                    if self.is_auto_reconnect {
+                        self.monitor_download_with_reconnect(cx, room_info, user_info, record_dir)
+                            .await?;
+                    }
+                    return Ok(());
+                }
+                Err(e) if Self::is_network_error(&e) => {
+                    retry_count += 1;
+                    let delay = self.calculate_backoff_delay(retry_count);
+
+                    eprintln!("网络异常，正在尝试重连 (第{retry_count}次，等待{delay:?}): {e}");
+
+                    // 更新UI状态
+                    let _ = self.entity.update(cx, |card, cx| {
+                        card.error_message = Some(format!(
+                            "网络异常，正在重连... (第{retry_count}次，等待{delay:?})"
+                        ));
+                        cx.notify();
+                    });
+
+                    // 等待一段时间后重试 - 使用异步定时器
+                    cx.background_executor().timer(delay).await;
+                    continue;
+                }
+                Err(e) => {
+                    // 非网络错误，直接返回
+                    eprintln!("非网络错误，停止重连: {e}");
+                    let _ = self.entity.update(cx, |card, cx| {
+                        card.error_message = Some(format!("非网络错误: {e}"));
+                        cx.notify();
+                    });
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    /// 监控下载状态并在需要时重连
+    async fn monitor_download_with_reconnect(
+        &mut self,
+        cx: &mut AsyncApp,
+        room_info: &LiveRoomInfoData,
+        user_info: &LiveUserInfo,
+        record_dir: &str,
+    ) -> Result<()> {
+        if !self.is_auto_reconnect {
+            return Ok(());
+        }
+
+        let entity = self.entity.clone();
+        let room_id = self.room_id;
+        let quality = self.quality;
+        let format = self.format;
+        let codec = self.codec;
+        let client = self.client.clone();
+        let initial_delay = self.reconnect_delay;
+        let room_info = room_info.clone();
+        let user_info = user_info.clone();
+        let record_dir = record_dir.to_string();
+
+        cx.spawn(async move |cx| {
+            let mut reconnect_count = 0;
+
+            loop {
+                // 等待一段时间后检查状态
+                cx.background_executor()
+                    .timer(Duration::from_secs(30))
+                    .await;
+
+                // 检查下载器状态
+                let should_reconnect = entity
+                    .update(cx, |card, _| matches!(&card.status, RoomCardStatus::Error))
+                    .unwrap_or(false);
+
+                if should_reconnect {
+                    reconnect_count += 1;
+
+                    // 计算指数退避延迟
+                    let delay = {
+                        const MAX_DELAY: Duration = Duration::from_secs(30 * 60); // 30分钟
+                        let exponential_delay =
+                            initial_delay * (2_u32.pow(reconnect_count.min(10)));
+                        if exponential_delay > MAX_DELAY {
+                            MAX_DELAY
+                        } else {
+                            exponential_delay
+                        }
+                    };
+
+                    eprintln!(
+                        "检测到下载异常，尝试重新连接 (第{reconnect_count}次，等待{delay:?})"
+                    );
+
+                    // 更新UI状态
+                    let _ = entity.update(cx, |card, cx| {
+                        card.error_message = Some(format!(
+                            "检测到异常，正在重连... (第{reconnect_count}次，等待{delay:?})"
+                        ));
+                        cx.notify();
+                    });
+
+                    // 创建新的下载器实例
+                    let mut new_downloader = BLiveDownloader::new(
+                        room_id,
+                        quality,
+                        format,
+                        codec,
+                        client.clone(),
+                        entity.clone(),
+                    );
+                    new_downloader.set_reconnect_config(u32::MAX, initial_delay, false); // 避免嵌套监控
+
+                    // 等待指数退避延迟
+                    cx.background_executor().timer(delay).await;
+
+                    // 尝试重新开始下载
+                    match new_downloader
+                        .start_download(cx, &room_info, &user_info, &record_dir)
+                        .await
+                    {
+                        Ok(_) => {
+                            eprintln!("重连成功！");
+                            let _ = entity.update(cx, |card, cx| {
+                                card.error_message = Some("重连成功，继续录制...".to_string());
+                                cx.notify();
+                            });
+                            reconnect_count = 0; // 重置重连计数
+                        }
+                        Err(e) => {
+                            eprintln!("重连失败: {e}");
+                            // 继续循环，无限重试
+                        }
+                    }
+                }
+            }
+
+            // 这里不会到达，因为是无限循环
+            #[allow(unreachable_code)]
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach();
 
         Ok(())
     }

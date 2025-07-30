@@ -188,7 +188,7 @@ impl RoomCard {
 
             // 开始下载
             match downloader
-                .start_download(cx, &room_info, &user_info, &record_dir)
+                .start_download_with_retry(cx, &room_info, &user_info, &record_dir)
                 .await
             {
                 Ok(_) => {

@@ -36,23 +36,6 @@ impl HttpStreamDownloader {
         }
     }
 
-    /// 验证URL是否有效
-    pub async fn validate_url(&self) -> Result<()> {
-        let request = Request::builder()
-            .uri(&self.url)
-            .method(Method::HEAD)
-            .body(AsyncBody::empty())
-            .context("Failed to build request")?;
-
-        let response = self.client.send(request).await.context("无法连接到URL")?;
-
-        if !response.status().is_success() {
-            anyhow::bail!("URL返回错误状态: {}", response.status());
-        }
-
-        Ok(())
-    }
-
     /// 检查输出路径
     fn check_output_path(&self) -> Result<()> {
         let path = Path::new(&self.config.output_path);
@@ -122,8 +105,72 @@ impl Downloader for HttpStreamDownloader {
 }
 
 impl HttpStreamDownloader {
-    /// 执行实际的下载任务（静态方法）
     async fn download_stream(
+        url: &str,
+        config: &DownloadConfig,
+        client: &HttpClient,
+        is_running: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<()> {
+        let mut retry_count = 0;
+        let initial_delay = std::time::Duration::from_secs(1);
+
+        loop {
+            match Self::try_download_stream(url, config, client, is_running).await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    retry_count += 1;
+
+                    // 检查是否是网络错误
+                    let error_str = e.to_string().to_lowercase();
+                    let is_network_error = error_str.contains("connection")
+                        || error_str.contains("timeout")
+                        || error_str.contains("reset")
+                        || error_str.contains("unreachable")
+                        || error_str.contains("请求失败")
+                        || error_str.contains("无法读取响应体");
+
+                    if is_network_error {
+                        // 计算指数退避延迟，最大30分钟
+                        const MAX_DELAY: std::time::Duration =
+                            std::time::Duration::from_secs(30 * 60);
+                        let exponential_delay = initial_delay * (2_u32.pow(retry_count.min(10)));
+                        let delay = if exponential_delay > MAX_DELAY {
+                            MAX_DELAY
+                        } else {
+                            exponential_delay
+                        };
+
+                        eprintln!("网络错误，正在重试 (第{retry_count}次，等待{delay:?}): {e}");
+
+                        // 使用指数退避延迟
+                        for _ in 0..(delay.as_millis() / 10) {
+                            if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+                                return Ok(());
+                            }
+                            std::thread::yield_now();
+                        }
+                        continue;
+                    } else {
+                        // 非网络错误，检查是否达到最大重试次数
+                        if retry_count >= config.retry_count {
+                            return Err(anyhow::anyhow!("下载失败，已达最大重试次数: {}", e));
+                        }
+
+                        // 对于非网络错误，使用较短的延迟
+                        let delay = std::time::Duration::from_secs(2_u64.pow(retry_count.min(5)));
+                        for _ in 0..(delay.as_millis() / 10) {
+                            if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+                                return Ok(());
+                            }
+                            std::thread::yield_now();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn try_download_stream(
         url: &str,
         config: &DownloadConfig,
         client: &HttpClient,
@@ -137,10 +184,16 @@ impl HttpStreamDownloader {
             .body(AsyncBody::empty())
             .context("Failed to build request")?;
 
-        let mut response = client.send(request).await.context("请求失败")?;
+        let mut response = client
+            .send(request)
+            .await
+            .context("网络请求失败，可能是网络连接问题")?;
 
         if !response.status().is_success() {
-            anyhow::bail!("HTTP请求失败: {}", response.status());
+            anyhow::bail!(
+                "HTTP请求失败: {}，可能是服务器错误或直播流已失效",
+                response.status()
+            );
         }
 
         let mut file = std::fs::File::create(&config.output_path).context("无法创建输出文件")?;
@@ -148,26 +201,43 @@ impl HttpStreamDownloader {
         // 获取响应体
         let body = response.body_mut();
         let mut buffer = [0; 8192];
+        let mut consecutive_errors = 0;
+        const MAX_CONSECUTIVE_ERRORS: u32 = 3;
 
         loop {
+            if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(());
+            }
+
             match body.read(&mut buffer).await {
                 Ok(bytes_read) => {
                     if bytes_read == 0 {
+                        // 流结束
                         return Ok(());
                     }
 
-                    let write_result = file.write_all(&buffer[..bytes_read]);
-
-                    if let Err(e) = write_result {
-                        // 根据错误类型返回相应的 RecordError
-                        return Err(e.into());
+                    if let Err(e) = file.write_all(&buffer[..bytes_read]) {
+                        return Err(anyhow::anyhow!("写入文件失败: {}", e));
                     }
 
-                    if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
-                        return Ok(());
-                    }
+                    // 重置连续错误计数
+                    consecutive_errors = 0;
                 }
-                Err(e) => return Err(anyhow::anyhow!("无法读取响应体: {}", e)),
+                Err(e) => {
+                    consecutive_errors += 1;
+                    eprintln!(
+                        "读取响应体时出现错误 ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}): {e}"
+                    );
+
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        return Err(anyhow::anyhow!("无法读取响应体，连续错误次数过多: {}", e));
+                    }
+
+                    // 短暂等待后继续尝试 - 这里使用一个非常短的等待
+                    // 在实际应用中，网络读取错误通常应该立即重试或者失败
+                    // 这里的目的是避免busy loop
+                    std::thread::yield_now();
+                }
             }
         }
     }

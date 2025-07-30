@@ -2,11 +2,10 @@ use crate::components::{RoomCard, RoomCardStatus};
 use crate::core::downloader::{DownloadConfig, DownloadStatus, Downloader};
 use crate::settings::StreamCodec;
 use anyhow::{Context, Result};
-use ez_ffmpeg::core::scheduler::ffmpeg_scheduler::{Initialization, Paused, Running};
-use ez_ffmpeg::{FfmpegContext, FfmpegScheduler, Input, Output};
+use ez_ffmpeg::core::scheduler::ffmpeg_scheduler::Initialization;
+use ez_ffmpeg::{FfmpegContext, FfmpegScheduler, Input, Output, error};
 use gpui::{AsyncApp, WeakEntity};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
 pub struct HttpHlsDownloader {
     url: String,
@@ -14,8 +13,6 @@ pub struct HttpHlsDownloader {
     status: DownloadStatus,
     is_running: Arc<std::sync::atomic::AtomicBool>,
     entity: WeakEntity<RoomCard>,
-    running_scheduler: Arc<Mutex<Option<FfmpegScheduler<Running>>>>,
-    paused_scheduler: Arc<Mutex<Option<FfmpegScheduler<Paused>>>>,
 }
 
 impl HttpHlsDownloader {
@@ -26,8 +23,6 @@ impl HttpHlsDownloader {
             status: DownloadStatus::NotStarted,
             is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             entity,
-            running_scheduler: Arc::new(Mutex::new(None)),
-            paused_scheduler: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -97,9 +92,6 @@ impl Downloader for HttpHlsDownloader {
         let url = self.url.clone();
         let config = self.config.clone();
         let entity = self.entity.clone();
-        let is_running = self.is_running.clone();
-        let running_scheduler_ref = self.running_scheduler.clone();
-        let paused_scheduler_ref = self.paused_scheduler.clone();
 
         // 确保输出目录存在
         self.ensure_output_directory()?;
@@ -110,71 +102,131 @@ impl Downloader for HttpHlsDownloader {
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
         match Self::download_stream(&url, &config).context("无法创建 FFmpeg 上下文") {
-            Ok(scheduler) => {
-                match scheduler.start() {
-                    Ok(scheduler) => {
-                        {
-                            let mut running_scheduler_guard = running_scheduler_ref.lock().unwrap();
-                            *running_scheduler_guard = Some(scheduler);
-                        }
-
-                        cx.spawn(async move |cx| {
-                            loop {
-                                // 检查是否需要暂停
-                                if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
-                                    if let Ok(mut running_scheduler_guard) =
-                                        running_scheduler_ref.lock()
-                                        && let Some(scheduler) = running_scheduler_guard.take()
-                                    {
-                                        if let Ok(mut paused_scheduler_guard) =
-                                            paused_scheduler_ref.lock()
-                                        {
-                                            *paused_scheduler_guard = Some(scheduler.pause());
-                                        }
-                                        break;
-                                    }
-                                } else {
-                                    // 检查是否完成
-                                    if let Ok(running_scheduler_guard) =
-                                        running_scheduler_ref.lock()
-                                        && let Some(ref scheduler) = *running_scheduler_guard
-                                        && scheduler.is_ended()
-                                    {
-                                        // 下载完成，更新状态
-                                        is_running
-                                            .store(false, std::sync::atomic::Ordering::Relaxed);
-                                        break;
-                                    }
-
-                                    // 检查是否完成
-                                    if let Ok(paused_scheduler_guard) = paused_scheduler_ref.lock()
-                                        && let Some(ref scheduler) = *paused_scheduler_guard
-                                        && scheduler.is_ended()
-                                    {
-                                        // 下载完成，更新状态
-                                        is_running
-                                            .store(false, std::sync::atomic::Ordering::Relaxed);
-                                        break;
-                                    }
-                                }
-
-                                cx.background_executor().timer(Duration::from_secs(3)).await;
+            Ok(scheduler) => match scheduler.start() {
+                Ok(scheduler) => {
+                    cx.spawn(async move |_cx| match scheduler.await {
+                        Ok(_) => {}
+                        Err(e) => match e {
+                            error::Error::AllocFrame(f) => {
+                                println!("FFmpeg 上下文错误: {f}");
                             }
-                        })
-                        .detach();
-                    }
-                    Err(e) => {
-                        self.status = DownloadStatus::Error(e.to_string());
-                        self.is_running
-                            .store(false, std::sync::atomic::Ordering::Relaxed);
-                        let _ = entity.update(cx, |card, _| {
-                            card.status = RoomCardStatus::Error;
-                            card.error_message = Some(e.to_string());
-                        });
-                        return Err(anyhow::anyhow!("无法启动 FFmpeg 上下文: {}", e));
-                    }
+                            error::Error::AllocOutputContext(c) => {
+                                println!("FFmpeg 上下文错误: {c}");
+                            }
+                            error::Error::AllocPacket(p) => {
+                                println!("FFmpeg 上下文错误: {p}");
+                            }
+                            error::Error::Decoder(e) => {
+                                println!("FFmpeg 上下文错误: {e}");
+                            }
+                            error::Error::Demuxing(e) => {
+                                println!("FFmpeg 上下文错误: {e}");
+                            }
+                            error::Error::Decoding(e) => {
+                                println!("FFmpeg 上下文错误: {e}");
+                            }
+                            error::Error::EOF => {
+                                println!("FFmpeg 上下文错误: 文件结束");
+                            }
+                            error::Error::Encoding(e) => {
+                                println!("FFmpeg 上下文错误: {e}");
+                            }
+                            error::Error::Bug => {
+                                println!("FFmpeg 上下文错误: 未知错误");
+                            }
+                            error::Error::NotStarted => {
+                                println!("FFmpeg 上下文错误: 未启动");
+                            }
+                            error::Error::Url(u) => {
+                                println!("FFmpeg 上下文错误: {u}");
+                            }
+                            error::Error::Exit => {
+                                println!("FFmpeg 上下文错误: 退出");
+                            }
+                            error::Error::OpenInputStream(i) => {
+                                println!("FFmpeg 上下文错误: {i}");
+                            }
+                            error::Error::FindStream(f) => {
+                                println!("FFmpeg 上下文错误: {f}");
+                            }
+                            error::Error::FilterGraphParse(f) => {
+                                println!("FFmpeg 上下文错误: {f}");
+                            }
+                            error::Error::FilterDescUtf8 => {
+                                println!("FFmpeg 上下文错误: 过滤器描述 UTF-8");
+                            }
+                            error::Error::FileSameAsInput(e) => {
+                                println!("FFmpeg 上下文错误: {e}");
+                            }
+                            error::Error::FilterNameUtf8 => {
+                                println!("FFmpeg 上下文错误: 过滤器名称 UTF-8");
+                            }
+                            error::Error::FilterZeroOutputs => {
+                                println!("FFmpeg 上下文错误: 过滤器零输出");
+                            }
+                            error::Error::ParseInteger => {
+                                println!("FFmpeg 上下文错误: 解析整数");
+                            }
+                            error::Error::OpenDecoder(d) => {
+                                println!("FFmpeg 上下文错误: {d}");
+                            }
+                            error::Error::OpenEncoder(e) => {
+                                println!("FFmpeg 上下文错误: {e}");
+                            }
+                            error::Error::Muxing(m) => {
+                                println!("FFmpeg 上下文错误: {m}");
+                            }
+                            error::Error::OpenOutput(open_output_error) => {
+                                println!("FFmpeg 上下文错误: {open_output_error}");
+                            }
+                            error::Error::FindDevices(find_devices_error) => {
+                                println!("FFmpeg 上下文错误: {find_devices_error}");
+                            }
+                            error::Error::FilterGraph(filter_graph_operation_error) => {
+                                println!("FFmpeg 上下文错误: {filter_graph_operation_error}");
+                            }
+                            error::Error::FrameFilterInit(_) => {
+                                println!("FFmpeg 上下文错误: 帧过滤器初始化");
+                            }
+                            error::Error::FrameFilterProcess(_) => {
+                                println!("FFmpeg 上下文错误: 帧过滤器处理");
+                            }
+                            error::Error::FrameFilterRequest(_) => {
+                                println!("FFmpeg 上下文错误: 帧过滤器请求");
+                            }
+                            error::Error::FrameFilterTypeNoMatched(_, _) => {
+                                println!("FFmpeg 上下文错误: 帧过滤器类型不匹配");
+                            }
+                            error::Error::FrameFilterStreamTypeNoMatched(_, _, _) => {
+                                println!("FFmpeg 上下文错误: 帧过滤器流类型不匹配");
+                            }
+                            error::Error::FrameFilterThreadExited => {
+                                println!("FFmpeg 上下文错误: 帧过滤器线程退出");
+                            }
+                            error::Error::IO(error) => {
+                                println!("FFmpeg 上下文错误: {error}");
+                            }
+                            error::Error::FrameFilterDstFinished => {
+                                println!("FFmpeg 上下文错误: 帧过滤器目标完成");
+                            }
+                            error::Error::FrameFilterSendOOM => {
+                                println!("FFmpeg 上下文错误: 帧过滤器发送 OOM");
+                            }
+                        },
+                    })
+                    .detach();
                 }
-            }
+                Err(e) => {
+                    self.status = DownloadStatus::Error(e.to_string());
+                    self.is_running
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    let _ = entity.update(cx, |card, _| {
+                        card.status = RoomCardStatus::Error;
+                        card.error_message = Some(e.to_string());
+                    });
+                    return Err(anyhow::anyhow!("无法启动 FFmpeg 上下文: {}", e));
+                }
+            },
             Err(e) => {
                 self.status = DownloadStatus::Error(e.to_string());
                 self.is_running
@@ -191,18 +243,6 @@ impl Downloader for HttpHlsDownloader {
         self.is_running
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.status = DownloadStatus::Paused;
-
-        if let Ok(mut running_scheduler_guard) = self.running_scheduler.lock()
-            && let Some(scheduler) = running_scheduler_guard.take()
-        {
-            scheduler.abort();
-        }
-
-        if let Ok(mut paused_scheduler_guard) = self.paused_scheduler.lock()
-            && let Some(scheduler) = paused_scheduler_guard.take()
-        {
-            scheduler.abort();
-        }
 
         Ok(())
     }

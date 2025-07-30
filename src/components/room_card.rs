@@ -1,7 +1,7 @@
 use crate::{
     core::{
         HttpClient,
-        downloader::BilibiliDownloader,
+        downloader::BLiveDownloader,
         http_client::{
             room::{LiveRoomInfoData, LiveStatus},
             user::LiveUserInfo,
@@ -43,7 +43,7 @@ pub struct RoomCard {
     pub(crate) user_info: LiveUserInfo,
     pub(crate) settings: RoomSettings,
     _subscriptions: Vec<Subscription>,
-    downloader: Option<BilibiliDownloader>,
+    downloader: Option<BLiveDownloader>,
 }
 
 impl RoomCard {
@@ -177,9 +177,9 @@ impl RoomCard {
 
         cx.spawn(async move |cx| {
             // 创建下载器
-            let mut downloader = BilibiliDownloader::new(
+            let mut downloader = BLiveDownloader::new(
                 room_info.room_id,
-                global_setting.quality.to_quality(),
+                global_setting.quality,
                 global_setting.format,
                 global_setting.codec,
                 client,

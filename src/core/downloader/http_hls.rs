@@ -1,79 +1,90 @@
+use crate::components::{RoomCard, RoomCardStatus};
 use crate::core::downloader::{DownloadConfig, DownloadStatus, Downloader};
-use crate::core::http_client::HttpClient;
+use crate::settings::StreamCodec;
 use anyhow::{Context, Result};
-use futures_util::AsyncReadExt;
-use gpui::http_client::{AsyncBody, Method, Request};
-use gpui::{AsyncApp, Task};
-use std::path::Path;
-use std::sync::Arc;
+use ez_ffmpeg::core::scheduler::ffmpeg_scheduler::{Initialization, Paused, Running};
+use ez_ffmpeg::{FfmpegContext, FfmpegScheduler, Input, Output};
+use gpui::{AsyncApp, WeakEntity};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-/// HLS下载器
-#[derive(Debug)]
 pub struct HttpHlsDownloader {
-    playlist_url: String,
+    url: String,
     config: DownloadConfig,
     status: DownloadStatus,
-    client: HttpClient,
     is_running: Arc<std::sync::atomic::AtomicBool>,
-    task: Option<Task<()>>,
+    entity: WeakEntity<RoomCard>,
+    running_scheduler: Arc<Mutex<Option<FfmpegScheduler<Running>>>>,
+    paused_scheduler: Arc<Mutex<Option<FfmpegScheduler<Paused>>>>,
 }
 
 impl HttpHlsDownloader {
-    /// 创建新的HLS下载器
-    pub fn new(playlist_url: String, config: DownloadConfig, client: HttpClient) -> Self {
+    pub fn new(url: String, config: DownloadConfig, entity: WeakEntity<RoomCard>) -> Self {
         Self {
-            playlist_url,
+            url,
             config,
             status: DownloadStatus::NotStarted,
-            client,
             is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            task: None,
+            entity,
+            running_scheduler: Arc::new(Mutex::new(None)),
+            paused_scheduler: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// 解析m3u8播放列表
-    #[allow(dead_code)]
-    async fn parse_playlist(&self, playlist_content: &str) -> Result<Vec<String>> {
-        let mut segments = Vec::new();
-        let base_url = self.get_base_url(&self.playlist_url);
+    fn download_stream(
+        url: &str,
+        config: &DownloadConfig,
+    ) -> Result<FfmpegScheduler<Initialization>> {
+        let mut input = Input::new(url);
+        input = input.set_input_opts(vec![
+            ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string()),
+            ("Referer", "https://live.bilibili.com/".to_string()),
+            ("reconnect", "1".to_string()),
+            ("reconnect_at_eof", "1".to_string()),
+            ("reconnect_streamed", "1".to_string()),
+            ("reconnect_delay_max", "2".to_string()),
+        ]);
 
-        for line in playlist_content.lines() {
-            let line = line.trim();
-            if !line.starts_with('#') && !line.is_empty() {
-                let segment_url = if line.starts_with("http") {
-                    line.to_string()
-                } else {
-                    format!("{base_url}{line}")
-                };
-                segments.push(segment_url);
+        // 根据编码设置视频编码器
+        match config.codec {
+            StreamCodec::AVC => {
+                input = input.set_video_codec("h264");
+            }
+            StreamCodec::HEVC => {
+                input = input.set_video_codec("hevc");
             }
         }
 
-        Ok(segments)
+        let output = Output::new(config.output_path.clone())
+            .set_audio_codec("aac")
+            .set_audio_channels(2)
+            .set_video_codec(match config.codec {
+                StreamCodec::AVC => "h264",
+                StreamCodec::HEVC => "hevc",
+            });
+
+        let ctx = FfmpegContext::builder()
+            .input(input)
+            .output(output)
+            .build()
+            .context("无法创建 FFmpeg 上下文")?;
+
+        Ok(FfmpegScheduler::new(ctx))
     }
 
-    /// 获取基础URL
-    #[allow(dead_code)]
-    fn get_base_url(&self, url: &str) -> String {
-        if let Some(last_slash) = url.rfind('/') {
-            url[..=last_slash].to_string()
-        } else {
-            url.to_string()
-        }
-    }
+    /// 确保输出目录存在
+    fn ensure_output_directory(&self) -> Result<()> {
+        let output_path = std::path::Path::new(&self.config.output_path);
 
-    /// 检查输出路径
-    fn check_output_path(&self) -> Result<()> {
-        let path = Path::new(&self.config.output_path);
-
-        if path.exists() && !self.config.overwrite {
-            anyhow::bail!("输出文件已存在且不允许覆盖");
-        }
-
-        if let Some(parent) = path.parent()
+        if let Some(parent) = output_path.parent()
             && !parent.exists()
         {
             std::fs::create_dir_all(parent).context("无法创建输出目录")?;
+        }
+
+        // 检查是否允许覆盖
+        if output_path.exists() && !self.config.overwrite {
+            anyhow::bail!("输出文件已存在且不允许覆盖: {}", self.config.output_path);
         }
 
         Ok(())
@@ -82,129 +93,120 @@ impl HttpHlsDownloader {
 
 impl Downloader for HttpHlsDownloader {
     fn start(&mut self, cx: &mut AsyncApp) -> Result<()> {
-        let playlist_url = self.playlist_url.clone();
+        let url = self.url.clone();
         let config = self.config.clone();
-        let client = self.client.clone();
+        let entity = self.entity.clone();
         let is_running = self.is_running.clone();
+        let running_scheduler_ref = self.running_scheduler.clone();
+        let paused_scheduler_ref = self.paused_scheduler.clone();
 
-        // 检查输出路径
-        self.check_output_path()?;
+        // 确保输出目录存在
+        self.ensure_output_directory()?;
 
         // 更新状态
         self.status = DownloadStatus::Downloading;
-        is_running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.is_running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        let task = cx.background_executor().spawn(async move {
-            if let Err(e) = Self::download_hls(&playlist_url, &config, &client).await {
-                eprintln!("下载失败: {e}");
+        match Self::download_stream(&url, &config).context("无法创建 FFmpeg 上下文") {
+            Ok(scheduler) => {
+                match scheduler.start() {
+                    Ok(scheduler) => {
+                        {
+                            let mut running_scheduler_guard = running_scheduler_ref.lock().unwrap();
+                            *running_scheduler_guard = Some(scheduler);
+                        }
+
+                        cx.spawn(async move |cx| {
+                            loop {
+                                // 检查是否需要暂停
+                                if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+                                    if let Ok(mut running_scheduler_guard) =
+                                        running_scheduler_ref.lock()
+                                        && let Some(scheduler) = running_scheduler_guard.take()
+                                    {
+                                        if let Ok(mut paused_scheduler_guard) =
+                                            paused_scheduler_ref.lock()
+                                        {
+                                            *paused_scheduler_guard = Some(scheduler.pause());
+                                        }
+                                        break;
+                                    }
+                                } else {
+                                    // 检查是否完成
+                                    if let Ok(running_scheduler_guard) =
+                                        running_scheduler_ref.lock()
+                                        && let Some(ref scheduler) = *running_scheduler_guard
+                                        && scheduler.is_ended()
+                                    {
+                                        // 下载完成，更新状态
+                                        is_running
+                                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                                        break;
+                                    }
+
+                                    // 检查是否完成
+                                    if let Ok(paused_scheduler_guard) = paused_scheduler_ref.lock()
+                                        && let Some(ref scheduler) = *paused_scheduler_guard
+                                        && scheduler.is_ended()
+                                    {
+                                        // 下载完成，更新状态
+                                        is_running
+                                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                                        break;
+                                    }
+                                }
+
+                                cx.background_executor().timer(Duration::from_secs(3)).await;
+                            }
+                        })
+                        .detach();
+                    }
+                    Err(e) => {
+                        self.status = DownloadStatus::Error(e.to_string());
+                        self.is_running
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                        let _ = entity.update(cx, |card, _| {
+                            card.status = RoomCardStatus::Error;
+                            card.error_message = Some(e.to_string());
+                        });
+                        return Err(anyhow::anyhow!("无法启动 FFmpeg 上下文: {}", e));
+                    }
+                }
             }
-        });
-
-        self.task = Some(task);
+            Err(e) => {
+                self.status = DownloadStatus::Error(e.to_string());
+                self.is_running
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                return Err(e);
+            }
+        }
 
         Ok(())
     }
 
     fn stop(&mut self) -> Result<()> {
+        // 设置停止标志
         self.is_running
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.status = DownloadStatus::Paused;
-        if let Some(task) = self.task.take() {
-            task.detach();
+
+        if let Ok(mut running_scheduler_guard) = self.running_scheduler.lock()
+            && let Some(scheduler) = running_scheduler_guard.take()
+        {
+            scheduler.abort();
         }
+
+        if let Ok(mut paused_scheduler_guard) = self.paused_scheduler.lock()
+            && let Some(scheduler) = paused_scheduler_guard.take()
+        {
+            scheduler.abort();
+        }
+
         Ok(())
     }
 
     fn status(&self) -> DownloadStatus {
         self.status.clone()
-    }
-}
-
-impl HttpHlsDownloader {
-    /// 执行HLS下载任务
-    #[allow(dead_code)]
-    async fn download_hls(
-        playlist_url: &str,
-        config: &DownloadConfig,
-        client: &HttpClient,
-    ) -> Result<()> {
-        // 获取播放列表内容
-        let request = Request::builder()
-            .uri(playlist_url)
-            .method(Method::GET)
-            .body(AsyncBody::empty())
-            .context("Failed to build request")?;
-
-        let mut playlist_response = client.send(request).await.context("无法获取播放列表")?;
-
-        if !playlist_response.status().is_success() {
-            anyhow::bail!("获取播放列表失败: {}", playlist_response.status());
-        }
-
-        let mut playlist_content = String::new();
-        playlist_response
-            .body_mut()
-            .read_to_string(&mut playlist_content)
-            .await
-            .context("无法读取播放列表内容")?;
-
-        // 解析播放列表
-        let segments = Self::parse_playlist_static(&playlist_content).await?;
-
-        if segments.is_empty() {
-            anyhow::bail!("播放列表为空");
-        }
-
-        // 创建输出文件
-        let mut output_file =
-            std::fs::File::create(&config.output_path).context("无法创建输出文件")?;
-
-        // 下载所有片段
-        for (index, segment_url) in segments.iter().enumerate() {
-            let segment_request = Request::builder()
-                .uri(segment_url)
-                .method(Method::GET)
-                .body(AsyncBody::empty())
-                .context("Failed to build request")?;
-
-            let mut segment_response = client
-                .send(segment_request)
-                .await
-                .context(format!("无法下载片段 {index}"))?;
-
-            if !segment_response.status().is_success() {
-                eprintln!("下载片段 {} 失败: {}", index, segment_response.status());
-                continue;
-            }
-
-            let mut segment_data = Vec::new();
-            segment_response
-                .body_mut()
-                .read_to_end(&mut segment_data)
-                .await
-                .context(format!("无法读取片段 {index} 数据"))?;
-
-            // 写入片段数据
-            std::io::copy(&mut segment_data.as_slice(), &mut output_file)
-                .context(format!("写入片段 {index} 失败"))?;
-        }
-
-        Ok(())
-    }
-
-    /// 解析播放列表（静态方法）
-    #[allow(dead_code)]
-    async fn parse_playlist_static(playlist_content: &str) -> Result<Vec<String>> {
-        let mut segments = Vec::new();
-        let lines: Vec<&str> = playlist_content.lines().collect();
-
-        for line in lines {
-            let line = line.trim();
-            if !line.starts_with('#') && !line.is_empty() {
-                segments.push(line.to_string());
-            }
-        }
-
-        Ok(segments)
     }
 }

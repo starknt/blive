@@ -7,13 +7,22 @@ use crate::core::http_client::HttpClient;
 use crate::core::http_client::room::LiveRoomInfoData;
 use crate::core::http_client::stream::{LiveRoomStreamUrl, PlayStream};
 use crate::core::http_client::user::LiveUserInfo;
-use crate::settings::{DEFAULT_RECORD_NAME, StreamCodec, VideoContainer};
+use crate::settings::{DEFAULT_RECORD_NAME, LiveProtocol, Quality, StreamCodec, VideoContainer};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
 use gpui::{AsyncApp, WeakEntity};
 use rand::Rng;
 use std::{borrow::Cow, time::Duration};
+
+#[derive(Debug, thiserror::Error)]
+pub enum DownloaderError {
+    #[error("网络错误: {0}")]
+    NetworkError(String),
+
+    #[error("文件系统错误: {0}")]
+    FileSystemError(String),
+}
 
 pub trait Downloader {
     /// 开始下载
@@ -26,7 +35,7 @@ pub trait Downloader {
     fn status(&self) -> DownloadStatus;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DownloadStatus {
     /// 未开始
     NotStarted,
@@ -50,6 +59,12 @@ pub struct DownloadConfig {
     pub timeout: u64,
     /// 重试次数
     pub retry_count: u32,
+    /// 编码
+    pub codec: StreamCodec,
+    /// 视频容器
+    pub format: VideoContainer,
+    /// 画质
+    pub quality: Quality,
 }
 
 impl Default for DownloadConfig {
@@ -59,11 +74,13 @@ impl Default for DownloadConfig {
             overwrite: false,
             timeout: 30,
             retry_count: 3,
+            codec: StreamCodec::default(),
+            format: VideoContainer::default(),
+            quality: Quality::default(),
         }
     }
 }
 
-#[derive(Debug)]
 pub enum DownloaderType {
     HttpStream(HttpStreamDownloader),
     HttpHls(HttpHlsDownloader),
@@ -94,9 +111,9 @@ impl leon::Values for DownloaderFilenameTemplate {
     }
 }
 
-pub struct BilibiliDownloader {
+pub struct BLiveDownloader {
     pub(crate) room_id: u64,
-    pub(crate) quality: u32,
+    pub(crate) quality: Quality,
     pub(crate) format: VideoContainer,
     pub(crate) codec: StreamCodec,
     pub(crate) client: HttpClient,
@@ -104,10 +121,10 @@ pub struct BilibiliDownloader {
     pub(crate) entity: WeakEntity<RoomCard>,
 }
 
-impl BilibiliDownloader {
+impl BLiveDownloader {
     pub fn new(
         room_id: u64,
-        quality: u32,
+        quality: Quality,
         format: VideoContainer,
         codec: StreamCodec,
         client: HttpClient,
@@ -132,7 +149,7 @@ impl BilibiliDownloader {
         loop {
             match self
                 .client
-                .get_live_room_stream_url(self.room_id, self.quality)
+                .get_live_room_stream_url(self.room_id, self.quality.to_quality())
                 .await
             {
                 Ok(stream_info) => return Ok(stream_info),
@@ -159,24 +176,24 @@ impl BilibiliDownloader {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("未找到播放信息"))?;
 
-        // 优先尝试http_stream协议
+        // 优先尝试http_hls协议
         if let Some(stream) = playurl_info
             .playurl
             .stream
             .iter()
-            .find(|stream| stream.protocol_name == "http_stream")
-        {
-            return self.parse_http_stream(stream);
-        }
-
-        // 如果没有http_stream，尝试HLS协议
-        if let Some(stream) = playurl_info
-            .playurl
-            .stream
-            .iter()
-            .find(|stream| stream.protocol_name == "http_hls")
+            .find(|stream| stream.protocol_name == LiveProtocol::default())
         {
             return self.parse_hls_stream(stream);
+        }
+
+        // 如果没有http_hls，尝试http_stream协议
+        if let Some(stream) = playurl_info
+            .playurl
+            .stream
+            .iter()
+            .find(|stream| stream.protocol_name == LiveProtocol::HttpStream)
+        {
+            return self.parse_http_stream(stream);
         }
 
         anyhow::bail!("未找到合适的直播流协议");
@@ -210,12 +227,14 @@ impl BilibiliDownloader {
         let url_info = &codec.url_info[rand::rng().random_range(0..codec.url_info.len())];
         let url = format!("{}{}{}", url_info.host, codec.base_url, url_info.extra);
 
-        // 创建HttpStreamDownloader（占位符，实际创建在start_download中）
         let config = DownloadConfig {
             output_path: String::new(), // 将在start_download中设置
             overwrite: false,
             timeout: 30,
             retry_count: 3,
+            codec: self.codec,
+            format: self.format,
+            quality: self.quality,
         };
         let http_downloader = HttpStreamDownloader::new(
             url.clone(),
@@ -255,14 +274,17 @@ impl BilibiliDownloader {
         let url_info = &codec.url_info[rand::rng().random_range(0..codec.url_info.len())];
         let url = format!("{}{}{}", url_info.host, codec.base_url, url_info.extra);
 
-        // 创建HttpHlsDownloader（占位符，实际创建在start_download中）
+        // 创建HttpHlsDownloader
         let config = DownloadConfig {
             output_path: String::new(), // 将在start_download中设置
             overwrite: false,
             timeout: 30,
             retry_count: 3,
+            codec: self.codec,
+            format: self.format,
+            quality: self.quality,
         };
-        let hls_downloader = HttpHlsDownloader::new(url.clone(), config, self.client.clone());
+        let hls_downloader = HttpHlsDownloader::new(url.clone(), config, self.entity.clone());
 
         Ok((url, DownloaderType::HttpHls(hls_downloader)))
     }
@@ -368,7 +390,7 @@ impl BilibiliDownloader {
         let filename = self.generate_filename(room_info, user_info)?;
 
         // 获取文件扩展名
-        let ext = self.format.ext(&self.codec);
+        let ext = self.format.ext();
 
         // 处理文件路径冲突
         let file_path = self.resolve_file_path(record_dir, &filename, ext)?;
@@ -381,6 +403,9 @@ impl BilibiliDownloader {
                     overwrite: false,
                     timeout: 30,
                     retry_count: 3,
+                    codec: self.codec,
+                    format: self.format,
+                    quality: self.quality,
                 };
                 DownloaderType::HttpStream(HttpStreamDownloader::new(
                     url,
@@ -395,19 +420,27 @@ impl BilibiliDownloader {
                     overwrite: false,
                     timeout: 30,
                     retry_count: 3,
+                    codec: self.codec,
+                    format: self.format,
+                    quality: self.quality,
                 };
-                DownloaderType::HttpHls(HttpHlsDownloader::new(url, config, self.client.clone()))
+                DownloaderType::HttpHls(HttpHlsDownloader::new(url, config, self.entity.clone()))
             }
         };
 
-        // 开始下载
         match &mut final_downloader {
-            DownloaderType::HttpStream(downloader) => {
-                downloader.start(cx)?;
-            }
-            DownloaderType::HttpHls(downloader) => {
-                downloader.start(cx)?;
-            }
+            DownloaderType::HttpStream(downloader) => match downloader.start(cx) {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(e);
+                }
+            },
+            DownloaderType::HttpHls(downloader) => match downloader.start(cx) {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(e);
+                }
+            },
         }
 
         // 保存下载器引用

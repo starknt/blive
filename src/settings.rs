@@ -17,7 +17,6 @@ pub const APP_NAME: &str = "blive";
 pub const DISPLAY_NAME: &str = "BLive";
 pub const DEFAULT_RECORD_NAME: &str = "{up_name}_{room_id}_{datetime}";
 pub const DEFAULT_VIDEO_FORMAT: VideoContainer = VideoContainer::FLV;
-pub const DEFAULT_VIDEO_CODEC: StreamCodec = StreamCodec::AVC;
 
 static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
@@ -64,12 +63,23 @@ static DEFAULT_RECORD_DIR: LazyLock<String> = LazyLock::new(|| {
 const DEFAULT_THEME: &str = "Catppuccin Mocha";
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
+pub enum LiveProtocol {
+    #[serde(rename = "http_stream")]
+    #[strum(serialize = "http_stream")]
+    HttpStream,
+    #[default]
+    #[serde(rename = "http_hls")]
+    #[strum(serialize = "http_hls")]
+    HttpHLS,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum VideoContainer {
-    #[default]
     #[strum(serialize = "flv")]
     FLV,
+    #[default]
     #[strum(serialize = "fmp4")]
     FMP4,
     #[strum(serialize = "ts")]
@@ -77,21 +87,11 @@ pub enum VideoContainer {
 }
 
 impl VideoContainer {
-    pub fn ext(&self, codec: &StreamCodec) -> &str {
-        // 根据codec和format确定视频文件扩展名
+    pub fn ext(&self) -> &str {
         match self {
-            VideoContainer::FLV => match codec {
-                StreamCodec::AVC => "flv",
-                StreamCodec::HEVC => "flv",
-            },
-            VideoContainer::FMP4 => match codec {
-                StreamCodec::AVC => "mp4",
-                StreamCodec::HEVC => "mp4",
-            },
-            VideoContainer::TS => match codec {
-                StreamCodec::AVC => "ts",
-                StreamCodec::HEVC => "ts",
-            },
+            VideoContainer::FLV => "flv",
+            VideoContainer::FMP4 => "mkv",
+            VideoContainer::TS => "mkv",
         }
     }
 }
@@ -106,21 +106,36 @@ impl fmt::Display for VideoContainer {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
 pub enum Quality {
     // 杜比
+    #[serde(rename = "杜比")]
+    #[strum(serialize = "杜比")]
     Dolby,
     // 4K
+    #[serde(rename = "4K")]
+    #[strum(serialize = "4K")]
     UHD4K,
     // 原画
+    #[default]
+    #[serde(rename = "原画")]
+    #[strum(serialize = "原画")]
     Original,
     // 蓝光
+    #[serde(rename = "蓝光")]
+    #[strum(serialize = "蓝光")]
     BlueRay,
     // 超清
+    #[serde(rename = "超清")]
+    #[strum(serialize = "超清")]
     UltraHD,
     // 高清
+    #[serde(rename = "高清")]
+    #[strum(serialize = "高清")]
     HD,
     // 流畅
+    #[serde(rename = "流畅")]
+    #[strum(serialize = "流畅")]
     Smooth,
 }
 
@@ -156,9 +171,9 @@ impl Quality {
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum StreamCodec {
-    #[default]
     #[strum(serialize = "avc")]
     AVC,
+    #[default]
     #[strum(serialize = "hevc")]
     HEVC,
 }
@@ -215,9 +230,9 @@ impl GlobalSettings {
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
-            quality: Quality::Original,
-            format: DEFAULT_VIDEO_FORMAT,
-            codec: DEFAULT_VIDEO_CODEC,
+            quality: Quality::default(),
+            format: VideoContainer::default(),
+            codec: StreamCodec::default(),
             record_dir: DEFAULT_RECORD_DIR.to_owned(),
             theme_name: DEFAULT_THEME.into(),
             rooms: vec![],

@@ -182,6 +182,7 @@ impl RoomCard {
                 global_setting.quality,
                 global_setting.format,
                 global_setting.codec,
+                global_setting.hwaccel,
                 client,
                 task_card.clone(),
             );
@@ -260,8 +261,15 @@ impl Render for RoomCard {
                                                     ))),
                                             )
                                             .child(
-                                                format!("房间号: {}", room_info.room_id)
-                                                    .into_element(),
+                                                format!(
+                                                    "房间号: {}",
+                                                    if room_info.short_id > 0 {
+                                                        room_info.short_id
+                                                    } else {
+                                                        room_info.room_id
+                                                    }
+                                                )
+                                                .into_element(),
                                             )
                                             .child(
                                                 // 直播状态和在线人数

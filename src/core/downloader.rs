@@ -65,6 +65,8 @@ pub struct DownloadConfig {
     pub format: VideoContainer,
     /// 画质
     pub quality: Quality,
+    /// 是否启用GPU加速
+    pub hwaccel: bool,
 }
 
 impl Default for DownloadConfig {
@@ -77,6 +79,7 @@ impl Default for DownloadConfig {
             codec: StreamCodec::default(),
             format: VideoContainer::default(),
             quality: Quality::default(),
+            hwaccel: true,
         }
     }
 }
@@ -123,6 +126,7 @@ pub struct BLiveDownloader {
     pub(crate) max_reconnect_attempts: u32,
     pub(crate) reconnect_delay: Duration,
     pub(crate) is_auto_reconnect: bool,
+    pub(crate) hwaccel: bool,
 }
 
 impl BLiveDownloader {
@@ -131,6 +135,7 @@ impl BLiveDownloader {
         quality: Quality,
         format: VideoContainer,
         codec: StreamCodec,
+        hwaccel: bool,
         client: HttpClient,
         entity: WeakEntity<RoomCard>,
     ) -> Self {
@@ -145,6 +150,7 @@ impl BLiveDownloader {
             max_reconnect_attempts: u32::MAX,        // 无限重试
             reconnect_delay: Duration::from_secs(1), // 初始延迟1秒
             is_auto_reconnect: true,                 // 是否启用自动重连
+            hwaccel,
         }
     }
 
@@ -269,6 +275,7 @@ impl BLiveDownloader {
             codec: self.codec,
             format: self.format,
             quality: self.quality,
+            hwaccel: self.hwaccel,
         };
         let http_downloader = HttpStreamDownloader::new(
             url.clone(),
@@ -317,6 +324,7 @@ impl BLiveDownloader {
             codec: self.codec,
             format: self.format,
             quality: self.quality,
+            hwaccel: self.hwaccel,
         };
         let hls_downloader = HttpHlsDownloader::new(url.clone(), config, self.entity.clone());
 
@@ -440,6 +448,7 @@ impl BLiveDownloader {
                     codec: self.codec,
                     format: self.format,
                     quality: self.quality,
+                    hwaccel: self.hwaccel,
                 };
                 DownloaderType::HttpStream(HttpStreamDownloader::new(
                     url,
@@ -457,6 +466,7 @@ impl BLiveDownloader {
                     codec: self.codec,
                     format: self.format,
                     quality: self.quality,
+                    hwaccel: self.hwaccel,
                 };
                 DownloaderType::HttpHls(HttpHlsDownloader::new(url, config, self.entity.clone()))
             }
@@ -575,6 +585,7 @@ impl BLiveDownloader {
         let quality = self.quality;
         let format = self.format;
         let codec = self.codec;
+        let hwaccel = self.hwaccel;
         let client = self.client.clone();
         let initial_delay = self.reconnect_delay;
         let room_info = room_info.clone();
@@ -628,6 +639,7 @@ impl BLiveDownloader {
                         quality,
                         format,
                         codec,
+                        hwaccel,
                         client.clone(),
                         entity.clone(),
                     );

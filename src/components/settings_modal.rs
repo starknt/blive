@@ -39,7 +39,6 @@ impl SettingsModal {
             InputState::new(window, cx)
                 .placeholder("录制目录路径")
                 .default_value(global_settings.record_dir.clone())
-                .disabled(true)
         });
 
         let quality_input = cx.new(|cx| {
@@ -205,7 +204,9 @@ impl Render for SettingsModal {
                                 .child(
                                     h_flex()
                                         .gap_x_4()
-                                        .child(TextInput::new(&self.record_dir_input))
+                                        .child(
+                                            TextInput::new(&self.record_dir_input).disabled(true),
+                                        )
                                         .child(
                                             Button::new("open_dir")
                                                 .label("选择目录")

@@ -27,6 +27,7 @@ regex = "1"
 strum = "0.27"
 reqwest_client = { git = "https://github.com/zed-industries/zed.git" }
 ez-ffmpeg = { version = "0.5.3", features = ["async"] }
+ffmpeg-sidecar = { version = "2", features = [] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
@@ -38,7 +39,7 @@ version = "0.1.0"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-ffmpeg-sidecar = "2"
+
 
 [profile.release]
 opt-level = 3

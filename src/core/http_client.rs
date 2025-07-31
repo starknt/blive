@@ -171,7 +171,7 @@ mod test {
         let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
         let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
         println!("url: {url}");
-        let mut file = File::create("test.m3u8").unwrap();
+        let mut file = File::create("output/test.m3u8").unwrap();
         let mut response = client
             .send(
                 Request::builder()
@@ -188,12 +188,73 @@ mod test {
 
     #[tokio::test]
     #[ignore]
-    async fn test_get_live_room_stream_url() {
+    async fn test_download_http_stream() {
+        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
+        let client = HttpClient::new(client);
+        let res = client.get_live_room_stream_url(1804892069, 10000).await;
+        println!("{res:#?}");
+        assert!(res.is_ok());
+
+        let stream = res.unwrap();
+        let playurl_info = stream.playurl_info.unwrap();
+        let stream = playurl_info
+            .playurl
+            .stream
+            .iter()
+            .find(|stream| stream.protocol_name == LiveProtocol::HttpStream)
+            .unwrap();
+        let stream = stream
+            .format
+            .iter()
+            .find(|f| f.format_name == VideoContainer::FLV)
+            .unwrap();
+        let stream = stream
+            .codec
+            .iter()
+            .find(|c| c.codec_name == StreamCodec::AVC)
+            .unwrap();
+        let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
+        let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
+
+        let user_agent_header = format!(
+            "User-Agent: {}",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        );
+        let referer_header = format!("Referer: {}", "https://live.bilibili.com/");
+
+        let mut response = client
+            .send(
+                Request::builder()
+                    .uri(url)
+                    .header("User-Agent", user_agent_header)
+                    .header("Referer", referer_header)
+                    .body(AsyncBody::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let mut buffer = [0_u8; 8192];
+        let mut file = File::create("output/http_stream.flv").unwrap();
+        let body = response.body_mut();
+
+        loop {
+            let byte_read = body.read(&mut buffer).await.unwrap();
+            if byte_read == 0 {
+                break;
+            }
+            file.write_all(&buffer[..byte_read]).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_live_room_stream_url_with_ffmpeg_sidecar() {
         ffmpeg_sidecar::download::auto_download().unwrap();
 
         let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
-        let api_client = HttpClient::new(client);
-        let res = api_client.get_live_room_stream_url(1804892069, 10000).await;
+        let client = HttpClient::new(client);
+        let res = client.get_live_room_stream_url(1804892069, 10000).await;
         println!("{res:#?}");
         assert!(res.is_ok());
 
@@ -233,15 +294,22 @@ mod test {
             .arg(url)
             .arg("-c")
             .arg("copy")
-            // .arg("-bsf:a")
-            // .arg("aac_adtstoasc") // if using AAC in TS
-            .arg("test.mkv");
+            .arg("-bsf:a")
+            .arg("aac_adtstoasc") // if using AAC in TS
+            .arg("output/ffmpeg_sidecar.mkv");
 
         let iter = cmd.spawn().unwrap().iter().unwrap();
 
-        for frame in iter.filter_frames() {
-            println!("frame: {}x{}", frame.width, frame.height);
-            let _pixels: Vec<u8> = frame.data; // <- raw RGB pixels! 🎨
+        for event in iter {
+            match event {
+                ffmpeg_sidecar::event::FfmpegEvent::Error(err) => {
+                    eprintln!("ffmpeg error event: {err:?}");
+                }
+                ffmpeg_sidecar::event::FfmpegEvent::LogEOF => {
+                    println!("ffmpeg log eof");
+                }
+                _ => {}
+            }
         }
     }
 
@@ -292,7 +360,7 @@ mod test {
         let ctx_builder = ez_ffmpeg::FfmpegContext::builder()
             .input(input)
             .output(
-                ez_ffmpeg::Output::new("test2.mkv")
+                ez_ffmpeg::Output::new("output/ffmpeg_ez.mkv")
                     .set_audio_codec("aac")
                     .set_audio_channels(2)
                     .set_video_codec("hevc"),
@@ -358,7 +426,7 @@ mod test {
         let ctx = ez_ffmpeg::FfmpegContext::builder()
             .input(input)
             .output(
-                ez_ffmpeg::Output::new("test2.mkv")
+                ez_ffmpeg::Output::new("output/ffmpeg_ez_network_error.mkv")
                     .set_audio_codec("aac")
                     .set_audio_channels(2)
                     .set_video_codec("hevc"),
@@ -374,6 +442,102 @@ mod test {
                 println!("FFmpeg processing failed: {e}");
             }
         }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_ffmpeg_sidecar_network_error() {
+        // 确保 output/ffmpeg_sidecar_network_error.mkv 不存在
+        if File::open("output/ffmpeg_sidecar_network_error.mkv").is_ok() {
+            std::fs::remove_file("output/ffmpeg_sidecar_network_error.mkv").unwrap();
+        }
+
+        ffmpeg_sidecar::download::auto_download().unwrap();
+
+        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
+        let api_client = HttpClient::new(client);
+        let res = api_client.get_live_room_stream_url(721, 10000).await;
+        assert!(res.is_ok());
+
+        let stream = res.unwrap();
+        let playurl_info = stream.playurl_info.unwrap();
+        let stream = playurl_info
+            .playurl
+            .stream
+            .iter()
+            .find(|stream| stream.protocol_name == LiveProtocol::HttpHLS)
+            .unwrap();
+        let stream = stream
+            .format
+            .iter()
+            .find(|f| f.format_name == VideoContainer::FMP4)
+            .unwrap();
+        let stream = stream
+            .codec
+            .iter()
+            .find(|c| c.codec_name == StreamCodec::AVC)
+            .unwrap();
+        let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
+        let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
+
+        let user_agent_header = format!(
+            "User-Agent: {}",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        );
+        let referer_header = format!("Referer: {}", "https://live.bilibili.com/");
+
+        let mut cmd = FfmpegCommand::new();
+        cmd.arg("-headers")
+            .arg(user_agent_header)
+            .arg("-headers")
+            .arg(referer_header)
+            .arg("-reconnect")
+            .arg("1")
+            .arg("-reconnect_on_network_error")
+            .arg("1")
+            .arg("-reconnect_on_http_error")
+            .arg("5xx")
+            .arg("-reconnect_at_eof")
+            .arg("1")
+            .arg("-reconnect_streamed")
+            .arg("1")
+            .arg("-reconnect_delay_max")
+            .arg("2")
+            .arg("-respect_retry_after")
+            .arg("1")
+            .arg("-i")
+            .arg(url)
+            .arg("-xerror")
+            .arg("-v")
+            .arg("error")
+            .arg("-c")
+            .arg("copy")
+            .arg("-bsf:a")
+            .arg("aac_adtstoasc") // if using AAC in TS
+            .arg("output/ffmpeg_sidecar_network_error.mkv");
+
+        let mut process = cmd.spawn().unwrap();
+        let iter = process.iter().unwrap();
+
+        for event in iter {
+            match event {
+                ffmpeg_sidecar::event::FfmpegEvent::Error(err) => {
+                    eprintln!("ffmpeg error event: {err:?}");
+                }
+                ffmpeg_sidecar::event::FfmpegEvent::Progress(progress) => {
+                    println!("progress: {progress:?}");
+                }
+                ffmpeg_sidecar::event::FfmpegEvent::LogEOF => {
+                    println!("ffmpeg log eof");
+                }
+                ffmpeg_sidecar::event::FfmpegEvent::Log(_, _) => {}
+                _ => {
+                    println!("ffmpeg event: {event:?}");
+                }
+            }
+        }
+
+        process.wait().unwrap();
     }
 
     #[tokio::test]

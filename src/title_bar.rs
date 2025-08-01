@@ -6,7 +6,7 @@ use gpui_component::{
     scroll::ScrollbarShow,
 };
 
-use crate::{settings::AppSettings, themes::ThemeSwitcher};
+use crate::{components::AppSettings, themes::ThemeSwitcher};
 
 pub struct AppTitleBar {
     title: String,

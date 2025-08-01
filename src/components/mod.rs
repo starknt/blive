@@ -1,7 +1,9 @@
+mod app_settings;
 mod room_card;
 mod room_input;
 mod settings_modal;
 
+pub use app_settings::AppSettings;
 pub use room_card::RoomCard;
 pub use room_card::RoomCardStatus;
 pub use room_input::RoomInput;

@@ -32,7 +32,6 @@ impl HttpHlsDownloader {
         }
     }
 
-    /// 发送事件到队列
     fn emit_event(&self, event: DownloadEvent) {
         self.context.push_event(event);
     }
@@ -111,8 +110,6 @@ impl Downloader for HttpHlsDownloader {
                     let mut lock = inner.lock().unwrap();
                     *lock = Some(process);
                 }
-
-                println!("开始下载HLS流: {url} {}", config.output_path);
 
                 let mut lock = inner.lock().unwrap();
                 if let Some(ref mut process) = *lock {

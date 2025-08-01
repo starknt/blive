@@ -1,5 +1,6 @@
 pub mod http_hls;
 pub mod http_stream;
+pub mod utils;
 
 use crate::components::{RoomCard, RoomCardStatus};
 use crate::core::downloader::{http_hls::HttpHlsDownloader, http_stream::HttpStreamDownloader};
@@ -146,8 +147,8 @@ impl DownloaderContext {
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "📊 下载进度: {:.2}MB, {:.1}kb/s, {}秒",
-                    *bytes_downloaded as f64 / 1024.0 / 1024.0,
-                    download_speed_kbps,
+                    utils::pretty_bytes(*bytes_downloaded),
+                    *download_speed_kbps,
                     duration_ms / 1000
                 );
             }

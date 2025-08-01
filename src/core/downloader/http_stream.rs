@@ -248,7 +248,10 @@ impl HttpStreamDownloader {
             match body.read(&mut buffer).await {
                 Ok(bytes_read) => {
                     if bytes_read == 0 {
-                        // 流结束
+                        context.push_event(DownloadEvent::Completed {
+                            file_path: config.output_path.clone(),
+                            file_size: 0,
+                        });
                         return Ok(());
                     }
 

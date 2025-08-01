@@ -736,7 +736,7 @@ dependencies = [
  "directories",
  "ez-ffmpeg",
  "ffmpeg-sidecar",
- "futures-util",
+ "futures",
  "gpui",
  "gpui-component",
  "leon",

@@ -30,7 +30,7 @@ impl BLiveApp {
             let client = state.client.clone();
             let room_id = settings.room_id;
             cx.spawn(async move |cx| {
-                let (room_data, user_data) = futures_util::join!(
+                let (room_data, user_data) = futures::join!(
                     client.get_live_room_info(room_id),
                     client.get_live_room_user_info(room_id)
                 );
@@ -105,7 +105,7 @@ impl BLiveApp {
             }
 
             cx.spawn(async move |_, cx| {
-                let (room_data, user_data) = futures_util::join!(
+                let (room_data, user_data) = futures::join!(
                     client.get_live_room_info(room_num),
                     client.get_live_room_user_info(room_num)
                 );

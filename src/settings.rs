@@ -198,7 +198,6 @@ pub struct GlobalSettings {
     pub codec: StreamCodec,
     pub record_dir: String,
     pub rooms: Vec<RoomSettings>,
-    pub hwaccel: bool,
 }
 
 impl GlobalSettings {
@@ -237,7 +236,6 @@ impl Default for GlobalSettings {
             record_dir: DEFAULT_RECORD_DIR.to_owned(),
             theme_name: DEFAULT_THEME.into(),
             rooms: vec![],
-            hwaccel: true,
         }
     }
 }

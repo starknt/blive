@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use futures_util::AsyncReadExt;
+use futures::AsyncReadExt;
 use gpui::http_client::{AsyncBody, HttpClient as GPUIHttpClient, Method, Request, Response};
 use std::fmt::Debug;
 use std::sync::Arc;

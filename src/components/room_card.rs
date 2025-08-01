@@ -29,16 +29,25 @@ enum RoomCardEvent {
     StatusChanged(RoomCardStatus),
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Copy)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum RoomCardStatus {
     Waiting,
-    Recording,
-    Error,
+    Recording(f32),
+    Error(String),
+}
+
+impl std::fmt::Display for RoomCardStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RoomCardStatus::Waiting => write!(f, "等待中"),
+            RoomCardStatus::Recording(speed) => write!(f, "录制中: {speed} kb/s"),
+            RoomCardStatus::Error(err) => write!(f, "错误: {err}"),
+        }
+    }
 }
 
 pub struct RoomCard {
     pub(crate) status: RoomCardStatus,
-    pub(crate) error_message: Option<String>,
     pub(crate) room_info: LiveRoomInfoData,
     pub(crate) user_info: LiveUserInfo,
     pub(crate) settings: RoomSettings,
@@ -51,10 +60,9 @@ impl RoomCard {
         Self {
             _subscriptions: vec![],
             status: match room.live_status {
-                LiveStatus::Live => RoomCardStatus::Recording,
+                LiveStatus::Live => RoomCardStatus::Recording(0.0),
                 _ => RoomCardStatus::Waiting,
             },
-            error_message: None,
             room_info: room,
             user_info: user,
             settings,
@@ -103,7 +111,7 @@ impl RoomCard {
             card._subscriptions = subscriptions;
 
             if live_status == LiveStatus::Live {
-                cx.emit(RoomCardEvent::StatusChanged(RoomCardStatus::Recording));
+                cx.emit(RoomCardEvent::StatusChanged(RoomCardStatus::Recording(0.0)));
             }
         });
 
@@ -115,15 +123,15 @@ impl RoomCard {
             RoomCardEvent::LiveStatusChanged(status) => {
                 this.update(cx, |card, cx| {
                     card.status = match status {
-                        LiveStatus::Live => RoomCardStatus::Recording,
+                        LiveStatus::Live => RoomCardStatus::Recording(0.0),
                         _ => RoomCardStatus::Waiting,
                     };
-                    cx.emit(RoomCardEvent::StatusChanged(card.status));
+                    cx.emit(RoomCardEvent::StatusChanged(card.status.clone()));
                 });
             }
             RoomCardEvent::StatusChanged(status) => {
-                match *status {
-                    RoomCardStatus::Recording => {
+                match status {
+                    RoomCardStatus::Recording(_speed) => {
                         Self::do_record(this, cx);
                     }
                     RoomCardStatus::Waiting => {
@@ -137,7 +145,7 @@ impl RoomCard {
                             cx.notify();
                         });
                     }
-                    RoomCardStatus::Error => {
+                    RoomCardStatus::Error(_err) => {
                         // 错误
                     }
                 }
@@ -182,7 +190,6 @@ impl RoomCard {
                 global_setting.quality,
                 global_setting.format,
                 global_setting.codec,
-                global_setting.hwaccel,
                 client,
                 task_card.clone(),
             );
@@ -195,13 +202,11 @@ impl RoomCard {
                 Ok(_) => {
                     let _ = task_card.update(cx, |card, _| {
                         card.status = RoomCardStatus::Waiting;
-                        card.error_message = None;
                     });
                 }
                 Err(e) => {
                     let _ = task_card.update(cx, |card, _| {
-                        card.status = RoomCardStatus::Error;
-                        card.error_message = Some(format!("下载失败: {e}"));
+                        card.status = RoomCardStatus::Error(format!("下载失败: {e}"));
                     });
                 }
             }
@@ -221,7 +226,7 @@ impl Render for RoomCard {
             .p_4()
             .border(px(1.0))
             .border_color(match self.status {
-                RoomCardStatus::Error => gpui::rgb(0xef4444),
+                RoomCardStatus::Error(_) => gpui::rgb(0xef4444),
                 _ => cx.theme().border.into(),
             })
             .child(
@@ -295,7 +300,10 @@ impl Render for RoomCard {
                                                         },
                                                     ))
                                                     .when(
-                                                        self.status == RoomCardStatus::Recording,
+                                                        matches!(
+                                                            self.status,
+                                                            RoomCardStatus::Recording(_)
+                                                        ),
                                                         |div| {
                                                             div.child(
                                                                 format!(
@@ -313,33 +321,30 @@ impl Render for RoomCard {
                                 h_flex()
                                     .gap_2()
                                     .child({
-                                        if self.status == RoomCardStatus::Recording {
+                                        if matches!(self.status, RoomCardStatus::Recording(_)) {
                                             h_flex().flex_1().children(vec![
                                                 Button::new("record")
                                                     .primary()
-                                                    .label(match self.status {
+                                                    .label(match &self.status {
                                                         RoomCardStatus::Waiting => {
                                                             "开始录制".into()
                                                         }
-                                                        RoomCardStatus::Recording => {
+                                                        RoomCardStatus::Recording(_) => {
                                                             "停止录制".into()
                                                         }
-                                                        RoomCardStatus::Error => format!(
-                                                            "错误: {}",
-                                                            self.error_message
-                                                                .clone()
-                                                                .unwrap_or_default()
-                                                        ),
+                                                        RoomCardStatus::Error(err) => {
+                                                            format!("错误: {err}")
+                                                        }
                                                     })
                                                     .on_click(cx.listener(|card, _, _, cx| {
-                                                        card.status = match card.status {
+                                                        card.status = match &card.status {
                                                             RoomCardStatus::Waiting => {
-                                                                RoomCardStatus::Recording
+                                                                RoomCardStatus::Recording(0.0)
                                                             }
-                                                            RoomCardStatus::Recording => {
+                                                            RoomCardStatus::Recording(_) => {
                                                                 RoomCardStatus::Waiting
                                                             }
-                                                            RoomCardStatus::Error => {
+                                                            RoomCardStatus::Error(_) => {
                                                                 RoomCardStatus::Waiting
                                                             }
                                                         };
@@ -366,7 +371,7 @@ impl Render for RoomCard {
                                 format!("分区: {}", room_info.area_name).into(),
                             ))
                             .child({
-                                if self.status == RoomCardStatus::Recording {
+                                if matches!(self.status, RoomCardStatus::Recording(_)) {
                                     Text::String(
                                         format!("直播开始时间: {}", room_info.live_time).into(),
                                     )
@@ -376,10 +381,23 @@ impl Render for RoomCard {
                             }),
                     )
                     .children({
-                        if self.status == RoomCardStatus::Error {
+                        if matches!(self.status, RoomCardStatus::Recording(_)) {
+                            vec![Text::String(self.status.to_string().into()).into_element()]
+                        } else {
+                            vec![]
+                        }
+                    })
+                    .children({
+                        if matches!(self.status, RoomCardStatus::Error(_)) {
                             vec![
-                                Text::String(self.error_message.clone().unwrap_or_default().into())
-                                    .into_element(),
+                                Text::String(
+                                    match &self.status {
+                                        RoomCardStatus::Error(err) => err.clone(),
+                                        _ => String::new(),
+                                    }
+                                    .into(),
+                                )
+                                .into_element(),
                             ]
                         } else {
                             vec![]

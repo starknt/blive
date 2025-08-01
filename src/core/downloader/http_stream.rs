@@ -2,7 +2,7 @@ use crate::components::{RoomCard, RoomCardStatus};
 use crate::core::downloader::{DownloadConfig, DownloadStatus, Downloader};
 use crate::core::http_client::HttpClient;
 use anyhow::{Context, Result};
-use futures_util::AsyncReadExt;
+use futures::AsyncReadExt;
 use gpui::http_client::{AsyncBody, Method, Request};
 use gpui::{AsyncApp, WeakEntity};
 use std::io::Write;
@@ -76,8 +76,7 @@ impl Downloader for HttpStreamDownloader {
                 eprintln!("下载失败: {e}");
 
                 let _ = entity.update(cx, |card, cx| {
-                    card.status = RoomCardStatus::Error;
-                    card.error_message = Some(format!("下载失败: {e:?}"));
+                    card.status = RoomCardStatus::Error(format!("下载失败: {e:?}"));
                     cx.notify();
                 });
 

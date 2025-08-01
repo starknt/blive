@@ -65,8 +65,6 @@ pub struct DownloadConfig {
     pub format: VideoContainer,
     /// 画质
     pub quality: Quality,
-    /// 是否启用GPU加速
-    pub hwaccel: bool,
 }
 
 impl Default for DownloadConfig {
@@ -79,7 +77,6 @@ impl Default for DownloadConfig {
             codec: StreamCodec::default(),
             format: VideoContainer::default(),
             quality: Quality::default(),
-            hwaccel: true,
         }
     }
 }
@@ -126,7 +123,6 @@ pub struct BLiveDownloader {
     pub(crate) max_reconnect_attempts: u32,
     pub(crate) reconnect_delay: Duration,
     pub(crate) is_auto_reconnect: bool,
-    pub(crate) hwaccel: bool,
 }
 
 impl BLiveDownloader {
@@ -135,7 +131,6 @@ impl BLiveDownloader {
         quality: Quality,
         format: VideoContainer,
         codec: StreamCodec,
-        hwaccel: bool,
         client: HttpClient,
         entity: WeakEntity<RoomCard>,
     ) -> Self {
@@ -150,7 +145,6 @@ impl BLiveDownloader {
             max_reconnect_attempts: u32::MAX,        // 无限重试
             reconnect_delay: Duration::from_secs(1), // 初始延迟1秒
             is_auto_reconnect: true,                 // 是否启用自动重连
-            hwaccel,
         }
     }
 
@@ -275,7 +269,6 @@ impl BLiveDownloader {
             codec: self.codec,
             format: self.format,
             quality: self.quality,
-            hwaccel: self.hwaccel,
         };
         let http_downloader = HttpStreamDownloader::new(
             url.clone(),
@@ -324,7 +317,6 @@ impl BLiveDownloader {
             codec: self.codec,
             format: self.format,
             quality: self.quality,
-            hwaccel: self.hwaccel,
         };
         let hls_downloader = HttpHlsDownloader::new(url.clone(), config, self.entity.clone());
 
@@ -448,7 +440,6 @@ impl BLiveDownloader {
                     codec: self.codec,
                     format: self.format,
                     quality: self.quality,
-                    hwaccel: self.hwaccel,
                 };
                 DownloaderType::HttpStream(HttpStreamDownloader::new(
                     url,
@@ -466,7 +457,6 @@ impl BLiveDownloader {
                     codec: self.codec,
                     format: self.format,
                     quality: self.quality,
-                    hwaccel: self.hwaccel,
                 };
                 DownloaderType::HttpHls(HttpHlsDownloader::new(url, config, self.entity.clone()))
             }
@@ -532,8 +522,8 @@ impl BLiveDownloader {
                 Ok(_) => {
                     // 下载成功启动，现在监控下载状态
                     if self.is_auto_reconnect {
-                        self.monitor_download_with_reconnect(cx, room_info, user_info, record_dir)
-                            .await?;
+                        // self.monitor_download_with_reconnect(cx, room_info, user_info, record_dir)
+                        //     .await?;
                     }
                     return Ok(());
                 }
@@ -545,7 +535,7 @@ impl BLiveDownloader {
 
                     // 更新UI状态
                     let _ = self.entity.update(cx, |card, cx| {
-                        card.error_message = Some(format!(
+                        card.status = RoomCardStatus::Error(format!(
                             "网络异常，正在重连... (第{retry_count}次，等待{delay:?})"
                         ));
                         cx.notify();
@@ -559,7 +549,7 @@ impl BLiveDownloader {
                     // 非网络错误，直接返回
                     eprintln!("非网络错误，停止重连: {e}");
                     let _ = self.entity.update(cx, |card, cx| {
-                        card.error_message = Some(format!("非网络错误: {e}"));
+                        card.status = RoomCardStatus::Error(format!("非网络错误: {e}"));
                         cx.notify();
                     });
                     return Err(e);
@@ -569,6 +559,7 @@ impl BLiveDownloader {
     }
 
     /// 监控下载状态并在需要时重连
+    #[allow(dead_code)]
     async fn monitor_download_with_reconnect(
         &mut self,
         cx: &mut AsyncApp,
@@ -585,7 +576,6 @@ impl BLiveDownloader {
         let quality = self.quality;
         let format = self.format;
         let codec = self.codec;
-        let hwaccel = self.hwaccel;
         let client = self.client.clone();
         let initial_delay = self.reconnect_delay;
         let room_info = room_info.clone();
@@ -603,7 +593,9 @@ impl BLiveDownloader {
 
                 // 检查下载器状态
                 let should_reconnect = entity
-                    .update(cx, |card, _| matches!(&card.status, RoomCardStatus::Error))
+                    .update(cx, |card, _| {
+                        matches!(&card.status, RoomCardStatus::Error(_))
+                    })
                     .unwrap_or(false);
 
                 if should_reconnect {
@@ -627,7 +619,7 @@ impl BLiveDownloader {
 
                     // 更新UI状态
                     let _ = entity.update(cx, |card, cx| {
-                        card.error_message = Some(format!(
+                        card.status = RoomCardStatus::Error(format!(
                             "检测到异常，正在重连... (第{reconnect_count}次，等待{delay:?})"
                         ));
                         cx.notify();
@@ -639,7 +631,6 @@ impl BLiveDownloader {
                         quality,
                         format,
                         codec,
-                        hwaccel,
                         client.clone(),
                         entity.clone(),
                     );
@@ -656,7 +647,7 @@ impl BLiveDownloader {
                         Ok(_) => {
                             eprintln!("重连成功！");
                             let _ = entity.update(cx, |card, cx| {
-                                card.error_message = Some("重连成功，继续录制...".to_string());
+                                card.status = RoomCardStatus::Recording(0.0);
                                 cx.notify();
                             });
                             reconnect_count = 0; // 重置重连计数
@@ -669,7 +660,6 @@ impl BLiveDownloader {
                 }
             }
 
-            // 这里不会到达，因为是无限循环
             #[allow(unreachable_code)]
             Ok::<(), anyhow::Error>(())
         })

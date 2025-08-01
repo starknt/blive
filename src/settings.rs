@@ -15,8 +15,8 @@ use std::{fmt, path::Path, sync::LazyLock};
 
 pub const APP_NAME: &str = "blive";
 pub const DISPLAY_NAME: &str = "BLive";
-pub const DEFAULT_RECORD_NAME: &str = "{up_name}_{room_id}_{datetime}";
-pub const DEFAULT_VIDEO_FORMAT: VideoContainer = VideoContainer::FLV;
+pub const DEFAULT_RECORD_NAME: &str = "{up_name}_{room_title}_{datetime}";
+const DEFAULT_THEME: &str = "Catppuccin Mocha";
 
 static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
@@ -59,8 +59,6 @@ static DEFAULT_RECORD_DIR: LazyLock<String> = LazyLock::new(|| {
         default
     }
 });
-
-const DEFAULT_THEME: &str = "Catppuccin Mocha";
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
 pub enum LiveProtocol {

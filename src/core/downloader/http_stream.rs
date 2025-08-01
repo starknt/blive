@@ -104,25 +104,7 @@ impl Downloader for HttpStreamDownloader {
 
     fn stop(&mut self) -> Result<()> {
         self.context.set_running(false);
-        self.status = DownloadStatus::Paused;
-
-        self.emit_event(DownloadEvent::Paused);
-        Ok(())
-    }
-
-    fn pause(&mut self) -> Result<()> {
-        self.context.set_running(false);
-        self.status = DownloadStatus::Paused;
-
-        self.emit_event(DownloadEvent::Paused);
-        Ok(())
-    }
-
-    fn resume(&mut self) -> Result<()> {
-        self.context.set_running(true);
-        self.status = DownloadStatus::Downloading;
-
-        self.emit_event(DownloadEvent::Resumed);
+        self.status = DownloadStatus::NotStarted;
         Ok(())
     }
 

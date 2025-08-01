@@ -1,6 +1,7 @@
 use crate::core::downloader::{
     DownloadConfig, DownloadEvent, DownloadStats, DownloadStatus, Downloader, DownloaderContext,
 };
+use crate::settings::StreamCodec;
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::command::FfmpegCommand;
@@ -51,20 +52,15 @@ impl HttpHlsDownloader {
             .arg(referer_header)
             .arg("-i")
             .arg(url)
-            // .arg("-xerror")
-            // .arg("-v")
-            // .arg("quiet")
             .arg("-c")
             .arg("copy")
             .arg("-bsf:a")
             .arg("aac_adtstoasc") // if using AAC in TS
-            // .arg("-c:v")
-            // .arg(match config.codec {
-            //     StreamCodec::AVC => "copy",
-            //     StreamCodec::HEVC => "hevc",
-            // })
-            // .arg("-c:a")
-            // .arg("copy")
+            .arg("-c:v")
+            .arg(match config.codec {
+                StreamCodec::AVC => "copy",
+                StreamCodec::HEVC => "hevc",
+            })
             .arg(config.output_path.clone());
 
         if config.overwrite {
@@ -82,21 +78,19 @@ impl HttpHlsDownloader {
 impl Downloader for HttpHlsDownloader {
     fn start(&mut self, cx: &mut AsyncApp) -> Result<()> {
         let url = self.url.clone();
-        let config = self.config.clone();
         // 更新状态
         self.status = DownloadStatus::Downloading;
         self.start_time = Some(Instant::now());
         self.context.set_running(true);
+        let config = self.config.clone();
+        let output_path = config.output_path.clone();
 
         // 发送开始事件
         self.emit_event(DownloadEvent::Started {
-            file_path: config.output_path.clone(),
+            file_path: output_path.clone(),
         });
 
         let inner = self.inner.clone();
-        let context_for_check = self.context.clone();
-        let config_clone = config.clone();
-
         let context = self.context.clone();
         let start_time = Instant::now();
         let mut bytes_downloaded = 0;
@@ -115,7 +109,7 @@ impl Downloader for HttpHlsDownloader {
                 if let Some(ref mut process) = *lock {
                     if let Ok(iter) = process.iter() {
                         for event in iter {
-                            if !context_for_check.is_running() {
+                            if !context.is_running() {
                                 break;
                             }
 
@@ -130,13 +124,13 @@ impl Downloader for HttpHlsDownloader {
                                 }
                                 FfmpegEvent::Done => {
                                     context.push_event(DownloadEvent::Completed {
-                                        file_path: config_clone.output_path.clone(),
+                                        file_path: output_path.clone(),
                                         file_size: 0,
                                     });
                                 }
                                 FfmpegEvent::LogEOF => {
                                     context.push_event(DownloadEvent::Completed {
-                                        file_path: config_clone.output_path.clone(),
+                                        file_path: output_path.clone(),
                                         file_size: 0,
                                     });
                                 }
@@ -162,9 +156,7 @@ impl Downloader for HttpHlsDownloader {
     fn stop(&mut self) -> Result<()> {
         // 设置停止标志
         self.context.set_running(false);
-        self.status = DownloadStatus::Paused;
-
-        self.emit_event(DownloadEvent::Paused);
+        self.status = DownloadStatus::NotStarted;
 
         if let Ok(mut guard) = self.inner.lock() {
             if let Some(process) = guard.as_mut() {
@@ -175,22 +167,6 @@ impl Downloader for HttpHlsDownloader {
             }
         }
 
-        Ok(())
-    }
-
-    fn pause(&mut self) -> Result<()> {
-        self.context.set_running(false);
-        self.status = DownloadStatus::Paused;
-
-        self.emit_event(DownloadEvent::Paused);
-        Ok(())
-    }
-
-    fn resume(&mut self) -> Result<()> {
-        self.context.set_running(true);
-        self.status = DownloadStatus::Downloading;
-
-        self.emit_event(DownloadEvent::Resumed);
         Ok(())
     }
 

@@ -143,12 +143,17 @@ mod test {
     use reqwest_client::ReqwestClient;
     use std::{fs::File, io::Write, sync::Arc};
 
-    #[tokio::test]
-    #[ignore]
-    async fn test_download_m3u8_file() {
+    async fn get_live_url(
+        room_id: u64,
+        quality: u32,
+        protocol: LiveProtocol,
+        container: VideoContainer,
+        codec: StreamCodec,
+    ) -> Result<String> {
         let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
         let client = HttpClient::new(client);
-        let res = client.get_live_room_stream_url(3044248, 10000).await;
+        let res = client.get_live_room_stream_url(room_id, quality).await;
+        assert!(res.is_ok());
 
         let stream = res.unwrap();
         let playurl_info = stream.playurl_info.unwrap();
@@ -156,21 +161,35 @@ mod test {
             .playurl
             .stream
             .iter()
-            .find(|stream| stream.protocol_name == LiveProtocol::HttpHLS)
+            .find(|stream| stream.protocol_name == protocol)
             .unwrap();
         let stream = stream
             .format
             .iter()
-            .find(|f| f.format_name == VideoContainer::TS)
+            .find(|f| f.format_name == container)
             .unwrap();
-        let stream = stream
-            .codec
-            .iter()
-            .find(|c| c.codec_name == StreamCodec::HEVC)
-            .unwrap();
+        let stream = stream.codec.iter().find(|c| c.codec_name == codec).unwrap();
         let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
         let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
-        println!("url: {url}");
+
+        Ok(url)
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_download_m3u8_file() {
+        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
+        let client = HttpClient::new(client);
+        let url = get_live_url(
+            3044248,
+            10000,
+            LiveProtocol::HttpHLS,
+            VideoContainer::TS,
+            StreamCodec::HEVC,
+        )
+        .await
+        .unwrap();
+
         let mut file = File::create("output/test.m3u8").unwrap();
         let mut response = client
             .send(
@@ -191,30 +210,15 @@ mod test {
     async fn test_download_http_stream() {
         let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
         let client = HttpClient::new(client);
-        let res = client.get_live_room_stream_url(1804892069, 10000).await;
-        println!("{res:#?}");
-        assert!(res.is_ok());
-
-        let stream = res.unwrap();
-        let playurl_info = stream.playurl_info.unwrap();
-        let stream = playurl_info
-            .playurl
-            .stream
-            .iter()
-            .find(|stream| stream.protocol_name == LiveProtocol::HttpStream)
-            .unwrap();
-        let stream = stream
-            .format
-            .iter()
-            .find(|f| f.format_name == VideoContainer::FLV)
-            .unwrap();
-        let stream = stream
-            .codec
-            .iter()
-            .find(|c| c.codec_name == StreamCodec::AVC)
-            .unwrap();
-        let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
-        let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
+        let url = get_live_url(
+            3044248,
+            10000,
+            LiveProtocol::HttpHLS,
+            VideoContainer::TS,
+            StreamCodec::HEVC,
+        )
+        .await
+        .unwrap();
 
         let user_agent_header = format!(
             "User-Agent: {}",
@@ -252,32 +256,15 @@ mod test {
     async fn test_get_live_room_stream_url_with_ffmpeg_sidecar() {
         ffmpeg_sidecar::download::auto_download().unwrap();
 
-        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
-        let client = HttpClient::new(client);
-        let res = client.get_live_room_stream_url(1804892069, 10000).await;
-        println!("{res:#?}");
-        assert!(res.is_ok());
-
-        let stream = res.unwrap();
-        let playurl_info = stream.playurl_info.unwrap();
-        let stream = playurl_info
-            .playurl
-            .stream
-            .iter()
-            .find(|stream| stream.protocol_name == LiveProtocol::HttpHLS)
-            .unwrap();
-        let stream = stream
-            .format
-            .iter()
-            .find(|f| f.format_name == VideoContainer::FMP4)
-            .unwrap();
-        let stream = stream
-            .codec
-            .iter()
-            .find(|c| c.codec_name == StreamCodec::AVC)
-            .unwrap();
-        let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
-        let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
+        let url = get_live_url(
+            1804892069,
+            10000,
+            LiveProtocol::HttpHLS,
+            VideoContainer::TS,
+            StreamCodec::HEVC,
+        )
+        .await
+        .unwrap();
 
         let user_agent_header = format!(
             "User-Agent: {}",
@@ -454,31 +441,15 @@ mod test {
 
         ffmpeg_sidecar::download::auto_download().unwrap();
 
-        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
-        let api_client = HttpClient::new(client);
-        let res = api_client.get_live_room_stream_url(721, 10000).await;
-        assert!(res.is_ok());
-
-        let stream = res.unwrap();
-        let playurl_info = stream.playurl_info.unwrap();
-        let stream = playurl_info
-            .playurl
-            .stream
-            .iter()
-            .find(|stream| stream.protocol_name == LiveProtocol::HttpHLS)
-            .unwrap();
-        let stream = stream
-            .format
-            .iter()
-            .find(|f| f.format_name == VideoContainer::FMP4)
-            .unwrap();
-        let stream = stream
-            .codec
-            .iter()
-            .find(|c| c.codec_name == StreamCodec::AVC)
-            .unwrap();
-        let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
-        let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
+        let url = get_live_url(
+            1804892069,
+            10000,
+            LiveProtocol::HttpHLS,
+            VideoContainer::FMP4,
+            StreamCodec::AVC,
+        )
+        .await
+        .unwrap();
 
         let user_agent_header = format!(
             "User-Agent: {}",

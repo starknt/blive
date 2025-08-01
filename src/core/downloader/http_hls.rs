@@ -1,5 +1,6 @@
 use crate::core::downloader::{
     DownloadConfig, DownloadEvent, DownloadStats, DownloadStatus, Downloader, DownloaderContext,
+    DownloaderError,
 };
 use crate::settings::StreamCodec;
 use anyhow::{Context, Result};
@@ -135,13 +136,46 @@ impl Downloader for HttpHlsDownloader {
                                     });
                                 }
                                 FfmpegEvent::Log(level, msg) => {
-                                    if level == ffmpeg_sidecar::event::LogLevel::Fatal {
-                                        context.push_event(DownloadEvent::Error {
-                                            error: msg,
-                                            is_recoverable: true,
-                                        });
+                                    match level {
+                                        ffmpeg_sidecar::event::LogLevel::Fatal => {
+                                            context.push_event(DownloadEvent::Error {
+                                                error: crate::core::downloader::DownloaderError::FfmpegRuntimeError {
+                                                    error_type: "Fatal".to_string(),
+                                                    message: msg,
+                                                },
+                                            });
+                                        }
+                                        ffmpeg_sidecar::event::LogLevel::Error => {
+                                            // 根据错误消息智能分类
+                                            if msg.contains("Connection reset") ||
+                                               msg.contains("timeout") ||
+                                               msg.contains("No route to host") ||
+                                               msg.contains("Connection refused") {
+                                                context.push_event(DownloadEvent::Error {
+                                                    error: crate::core::downloader::DownloaderError::network_connection_failed(
+                                                        msg, 0
+                                                    ),
+                                                });
+                                            } else if msg.contains("Protocol not found") ||
+                                                     msg.contains("Invalid data found") {
+                                                context.push_event(DownloadEvent::Error {
+                                                    error: crate::core::downloader::DownloaderError::StreamEncodingError {
+                                                        codec: "unknown".to_string(),
+                                                        details: msg,
+                                                    },
+                                                });
+                                            } else {
+                                                context.push_event(DownloadEvent::Error {
+                                                    error: DownloaderError::FfmpegRuntimeError {
+                                                        error_type: "Error".to_string(),
+                                                        message: msg,
+                                                    },
+                                                });
+                                            }
+                                        }
+                                        _ => {                                        }
                                     }
-                                }
+                                },
                                 _ => {}
                             }
                         }

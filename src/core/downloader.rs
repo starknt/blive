@@ -615,61 +615,92 @@ impl BLiveDownloader {
     }
 
     fn resolve_file_path(&self, base_path: &str, filename: &str, ext: &str) -> Result<String> {
-        let mut final_path = format!("{base_path}/{filename}.{ext}");
-        let mut part_number = 1;
+        const MAX_PARTS: u32 = 50; // 最大分片数量限制
 
-        while std::path::Path::new(&final_path).exists() {
-            // 创建文件夹（去掉扩展名）
-            let file_stem = std::path::Path::new(filename)
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy();
-            let folder_path = format!("{base_path}/{file_stem}");
+        let initial_file_path = format!("{base_path}/{filename}.{ext}");
+        let file_stem = std::path::Path::new(filename)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let folder_path = format!("{base_path}/{file_stem}");
 
-            // 创建文件夹
+        // 检查是否已经存在分P文件夹
+        let folder_exists = std::path::Path::new(&folder_path).exists();
+        let initial_file_exists = std::path::Path::new(&initial_file_path).exists();
+
+        // 如果文件夹和原文件都不存在，返回原始路径
+        if !folder_exists && !initial_file_exists {
+            return Ok(initial_file_path);
+        }
+
+        // 如果存在分P文件夹或原文件存在，需要使用分P系统
+        if folder_exists || initial_file_exists {
+            // 创建文件夹（如果不存在）
             std::fs::create_dir_all(&folder_path).context("无法创建文件夹")?;
 
-            // 检查文件夹中已有的文件，找到下一个可用的编号
-            let folder = std::fs::read_dir(&folder_path).unwrap_or_else(|_| {
-                std::fs::create_dir_all(&folder_path).unwrap_or_default();
-                std::fs::read_dir(&folder_path).unwrap_or_else(|_| {
-                    panic!("无法创建或读取文件夹: {folder_path}");
-                })
-            });
-
+            // 扫描文件夹中现有的分P文件，找到所有现有的编号
             let mut existing_parts = Vec::new();
-            for entry in folder.flatten() {
-                if let Some(file_name) = entry
-                    .file_name()
-                    .to_string_lossy()
-                    .strip_suffix(&format!(".{ext}"))
-                    && let Some(part_str) = file_name.strip_suffix(&format!("_P{part_number}"))
-                    && part_str == file_stem
-                {
-                    existing_parts.push(part_number);
+
+            if let Ok(folder) = std::fs::read_dir(&folder_path) {
+                for entry in folder.flatten() {
+                    let file_name_os = entry.file_name();
+                    let file_name = file_name_os.to_string_lossy();
+
+                    // 检查是否是我们的分P文件格式: {file_stem}_P{number}.{ext}
+                    if let Some(name_without_ext) = file_name.strip_suffix(&format!(".{ext}")) {
+                        if let Some(part_str) =
+                            name_without_ext.strip_prefix(&format!("{file_stem}_P"))
+                        {
+                            // 尝试解析分P编号
+                            if let Ok(part_num) = part_str.parse::<u32>() {
+                                existing_parts.push(part_num);
+                            }
+                        }
+                    }
                 }
             }
 
-            // 找到下一个可用的编号
-            while existing_parts.contains(&part_number) {
-                part_number += 1;
+            // 找到下一个可用的编号，但不超过最大限制
+            let next_part_number = if existing_parts.is_empty() {
+                1
+            } else {
+                existing_parts.sort();
+                let max_existing = *existing_parts.iter().max().unwrap_or(&0);
+
+                // 如果已达到最大分片数量，使用最后一个分片（P50）
+                if max_existing >= MAX_PARTS {
+                    MAX_PARTS
+                } else {
+                    max_existing + 1
+                }
+            };
+
+            // 如果原文件存在且P1文件不存在，将原文件重命名为P1
+            let first_part_name = format!("{file_stem}_P1.{ext}");
+            let first_part_path = format!("{folder_path}/{first_part_name}");
+
+            if initial_file_exists && !std::path::Path::new(&first_part_path).exists() {
+                std::fs::rename(&initial_file_path, &first_part_path).context(format!(
+                    "重命名原文件失败: {initial_file_path} -> {first_part_path}"
+                ))?;
             }
 
-            // 重命名旧文件
-            let old_file_path = final_path.clone();
-            let new_file_name = format!("{file_stem}_P{part_number}.{ext}");
+            // 返回分P文件路径
+            let new_file_name = format!("{file_stem}_P{next_part_number}.{ext}");
             let new_file_path = format!("{folder_path}/{new_file_name}");
 
-            std::fs::rename(&old_file_path, &new_file_path).context(format!(
-                "重命名文件失败: {old_file_path} -> {new_file_path}"
-            ))?;
+            // 如果达到最大分片数量，记录日志提示
+            if next_part_number == MAX_PARTS && existing_parts.contains(&MAX_PARTS) {
+                eprintln!(
+                    "⚠️  已达到最大分片数量({MAX_PARTS})，后续内容将附加到 P{MAX_PARTS} 文件中"
+                );
+            }
 
-            // 更新文件路径为新的编号
-            final_path = format!("{}/{}_P{}.{}", folder_path, file_stem, part_number + 1, ext);
-            part_number += 1;
+            Ok(new_file_path)
+        } else {
+            Ok(initial_file_path)
         }
-
-        Ok(final_path)
     }
 
     pub async fn start_download(

@@ -313,136 +313,136 @@ mod test {
         }
     }
 
-    #[tokio::test]
-    #[ignore]
-    async fn test_get_live_room_stream_url_with_ffmpeg_ez() {
-        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
-        let api_client = HttpClient::new(client);
-        let res = api_client.get_live_room_stream_url(732, 10000).await;
-        assert!(res.is_ok());
+    // #[tokio::test]
+    // #[ignore]
+    // async fn test_get_live_room_stream_url_with_ffmpeg_ez() {
+    //     let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
+    //     let api_client = HttpClient::new(client);
+    //     let res = api_client.get_live_room_stream_url(732, 10000).await;
+    //     assert!(res.is_ok());
 
-        let stream = res.unwrap();
-        let playurl_info = stream.playurl_info.unwrap();
-        let stream = playurl_info
-            .playurl
-            .stream
-            .iter()
-            .find(|stream| stream.protocol_name == LiveProtocol::HttpHLS)
-            .unwrap();
-        let stream = stream
-            .format
-            .iter()
-            .find(|f| f.format_name == VideoContainer::FMP4)
-            .unwrap();
-        let stream = stream
-            .codec
-            .iter()
-            .find(|c| c.codec_name == StreamCodec::HEVC)
-            .unwrap();
-        let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
-        let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
+    //     let stream = res.unwrap();
+    //     let playurl_info = stream.playurl_info.unwrap();
+    //     let stream = playurl_info
+    //         .playurl
+    //         .stream
+    //         .iter()
+    //         .find(|stream| stream.protocol_name == LiveProtocol::HttpHLS)
+    //         .unwrap();
+    //     let stream = stream
+    //         .format
+    //         .iter()
+    //         .find(|f| f.format_name == VideoContainer::FMP4)
+    //         .unwrap();
+    //     let stream = stream
+    //         .codec
+    //         .iter()
+    //         .find(|c| c.codec_name == StreamCodec::HEVC)
+    //         .unwrap();
+    //     let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
+    //     let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
 
-        let user_agent_header = format!(
-            "User-Agent: {}",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        );
-        let referer_header = format!("Referer: {}", "https://live.bilibili.com/");
+    //     let user_agent_header = format!(
+    //         "User-Agent: {}",
+    //         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    //     );
+    //     let referer_header = format!("Referer: {}", "https://live.bilibili.com/");
 
-        let mut input = ez_ffmpeg::Input::new(url);
-        input = input
-            .set_input_opts(vec![
-                ("user_agent", user_agent_header),
-                ("referer", referer_header),
-                ("c", "copy".to_owned()),
-            ])
-            .set_video_codec("hevc");
+    //     let mut input = ez_ffmpeg::Input::new(url);
+    //     input = input
+    //         .set_input_opts(vec![
+    //             ("user_agent", user_agent_header),
+    //             ("referer", referer_header),
+    //             ("c", "copy".to_owned()),
+    //         ])
+    //         .set_video_codec("hevc");
 
-        let ctx_builder = ez_ffmpeg::FfmpegContext::builder()
-            .input(input)
-            .output(
-                ez_ffmpeg::Output::new("output/ffmpeg_ez.mkv")
-                    .set_audio_codec("aac")
-                    .set_audio_channels(2)
-                    .set_video_codec("hevc"),
-            )
-            .build()
-            .unwrap();
+    //     let ctx_builder = ez_ffmpeg::FfmpegContext::builder()
+    //         .input(input)
+    //         .output(
+    //             ez_ffmpeg::Output::new("output/ffmpeg_ez.mkv")
+    //                 .set_audio_codec("aac")
+    //                 .set_audio_channels(2)
+    //                 .set_video_codec("hevc"),
+    //         )
+    //         .build()
+    //         .unwrap();
 
-        match ctx_builder.start().unwrap().await {
-            Ok(()) => {
-                println!("FFmpeg processing completed successfully!");
-            }
-            Err(e) => {
-                println!("FFmpeg processing failed: {e}");
-            }
-        }
-    }
+    //     match ctx_builder.start().unwrap().await {
+    //         Ok(()) => {
+    //             println!("FFmpeg processing completed successfully!");
+    //         }
+    //         Err(e) => {
+    //             println!("FFmpeg processing failed: {e}");
+    //         }
+    //     }
+    // }
 
-    #[tokio::test]
-    #[ignore]
-    async fn test_ffmpeg_ez_network_error() {
-        let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
-        let api_client = HttpClient::new(client);
-        let res = api_client.get_live_room_stream_url(721, 10000).await;
-        assert!(res.is_ok());
+    // #[tokio::test]
+    // #[ignore]
+    // async fn test_ffmpeg_ez_network_error() {
+    //     let client = Arc::new(ReqwestClient::user_agent("blive/0.1.0").unwrap());
+    //     let api_client = HttpClient::new(client);
+    //     let res = api_client.get_live_room_stream_url(721, 10000).await;
+    //     assert!(res.is_ok());
 
-        let stream = res.unwrap();
-        let playurl_info = stream.playurl_info.unwrap();
-        let stream = playurl_info
-            .playurl
-            .stream
-            .iter()
-            .find(|stream| stream.protocol_name == LiveProtocol::HttpHLS)
-            .unwrap();
-        let stream = stream
-            .format
-            .iter()
-            .find(|f| f.format_name == VideoContainer::FMP4)
-            .unwrap();
-        let stream = stream
-            .codec
-            .iter()
-            .find(|c| c.codec_name == StreamCodec::HEVC)
-            .unwrap();
-        let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
-        let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
+    //     let stream = res.unwrap();
+    //     let playurl_info = stream.playurl_info.unwrap();
+    //     let stream = playurl_info
+    //         .playurl
+    //         .stream
+    //         .iter()
+    //         .find(|stream| stream.protocol_name == LiveProtocol::HttpHLS)
+    //         .unwrap();
+    //     let stream = stream
+    //         .format
+    //         .iter()
+    //         .find(|f| f.format_name == VideoContainer::FMP4)
+    //         .unwrap();
+    //     let stream = stream
+    //         .codec
+    //         .iter()
+    //         .find(|c| c.codec_name == StreamCodec::HEVC)
+    //         .unwrap();
+    //     let url_info = &stream.url_info[rand::rng().random_range(0..stream.url_info.len())];
+    //     let url = format!("{}{}{}", url_info.host, stream.base_url, url_info.extra);
 
-        let user_agent_header = format!(
-            "User-Agent: {}",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        );
-        let referer_header = format!("Referer: {}", "https://live.bilibili.com/");
+    //     let user_agent_header = format!(
+    //         "User-Agent: {}",
+    //         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    //     );
+    //     let referer_header = format!("Referer: {}", "https://live.bilibili.com/");
 
-        let mut input = ez_ffmpeg::Input::new(url);
-        input = input
-            .set_input_opts(vec![
-                ("user_agent", user_agent_header),
-                ("referer", referer_header),
-                ("c", "copy".to_owned()),
-                ("reconnect", "0".to_string()),
-            ])
-            .set_video_codec("hevc");
+    //     let mut input = ez_ffmpeg::Input::new(url);
+    //     input = input
+    //         .set_input_opts(vec![
+    //             ("user_agent", user_agent_header),
+    //             ("referer", referer_header),
+    //             ("c", "copy".to_owned()),
+    //             ("reconnect", "0".to_string()),
+    //         ])
+    //         .set_video_codec("hevc");
 
-        let ctx = ez_ffmpeg::FfmpegContext::builder()
-            .input(input)
-            .output(
-                ez_ffmpeg::Output::new("output/ffmpeg_ez_network_error.mkv")
-                    .set_audio_codec("aac")
-                    .set_audio_channels(2)
-                    .set_video_codec("hevc"),
-            )
-            .build()
-            .unwrap();
+    //     let ctx = ez_ffmpeg::FfmpegContext::builder()
+    //         .input(input)
+    //         .output(
+    //             ez_ffmpeg::Output::new("output/ffmpeg_ez_network_error.mkv")
+    //                 .set_audio_codec("aac")
+    //                 .set_audio_channels(2)
+    //                 .set_video_codec("hevc"),
+    //         )
+    //         .build()
+    //         .unwrap();
 
-        match ctx.start().unwrap().await {
-            Ok(_) => {
-                println!("FFmpeg processing completed successfully!");
-            }
-            Err(e) => {
-                println!("FFmpeg processing failed: {e}");
-            }
-        }
-    }
+    //     match ctx.start().unwrap().await {
+    //         Ok(_) => {
+    //             println!("FFmpeg processing completed successfully!");
+    //         }
+    //         Err(e) => {
+    //             println!("FFmpeg processing failed: {e}");
+    //         }
+    //     }
+    // }
 
     #[tokio::test]
     #[ignore]

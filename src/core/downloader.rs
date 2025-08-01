@@ -13,6 +13,7 @@ use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
 use gpui::{AsyncApp, WeakEntity};
 use rand::Rng;
+use std::sync::{Mutex, atomic};
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, time::Duration};
 
 #[derive(Clone)]
@@ -23,11 +24,9 @@ pub struct DownloaderContext {
     pub quality: Quality,
     pub format: VideoContainer,
     pub codec: StreamCodec,
-    // 内部状态
-    stats: Arc<std::sync::Mutex<DownloadStats>>,
-    is_running: Arc<std::sync::atomic::AtomicBool>,
-    // 事件队列 - 使用内部可变性
-    event_queue: Arc<std::sync::Mutex<VecDeque<DownloadEvent>>>,
+    stats: Arc<Mutex<DownloadStats>>,
+    is_running: Arc<atomic::AtomicBool>,
+    event_queue: Arc<Mutex<VecDeque<DownloadEvent>>>,
 }
 
 impl DownloaderContext {

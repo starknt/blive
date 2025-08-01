@@ -1,22 +1,25 @@
-use crate::components::{RoomCard, RoomCardStatus};
-use crate::core::downloader::{DownloadConfig, DownloadStatus, Downloader};
+use crate::core::downloader::{
+    DownloadConfig, DownloadEvent, DownloadStats, DownloadStatus, Downloader, DownloaderContext,
+};
 use crate::core::http_client::HttpClient;
 use anyhow::{Context, Result};
 use futures::AsyncReadExt;
+use gpui::AsyncApp;
 use gpui::http_client::{AsyncBody, Method, Request};
-use gpui::{AsyncApp, WeakEntity};
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-#[derive(Debug)]
 pub struct HttpStreamDownloader {
     url: String,
     config: DownloadConfig,
     status: DownloadStatus,
     client: HttpClient,
     is_running: Arc<std::sync::atomic::AtomicBool>,
-    entity: WeakEntity<RoomCard>,
+    stats: DownloadStats,
+    start_time: Option<Instant>,
+    context: DownloaderContext,
 }
 
 impl HttpStreamDownloader {
@@ -24,7 +27,7 @@ impl HttpStreamDownloader {
         url: String,
         config: DownloadConfig,
         client: HttpClient,
-        entity: WeakEntity<RoomCard>,
+        context: DownloaderContext,
     ) -> Self {
         Self {
             url,
@@ -32,8 +35,15 @@ impl HttpStreamDownloader {
             status: DownloadStatus::NotStarted,
             client,
             is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            entity,
+            stats: DownloadStats::default(),
+            start_time: None,
+            context,
         }
+    }
+
+    /// 发送事件到队列
+    fn emit_event(&self, event: DownloadEvent) {
+        self.context.push_event(event);
     }
 
     /// 检查输出路径
@@ -60,28 +70,36 @@ impl Downloader for HttpStreamDownloader {
         let config = self.config.clone();
         let client = self.client.clone();
         let is_running = self.is_running.clone();
-        let entity = self.entity.clone();
+        let context = self.context.clone();
+
         // 检查输出路径
         self.check_output_path()?;
 
         // 更新状态
         self.status = DownloadStatus::Downloading;
+        self.start_time = Some(Instant::now());
         is_running.store(true, std::sync::atomic::Ordering::Relaxed);
 
-        cx.spawn(async move |cx| {
+        // 发送开始事件
+        self.emit_event(DownloadEvent::Started {
+            file_path: config.output_path.clone(),
+        });
+
+        cx.spawn(async move |_cx| {
             #[cfg(debug_assertions)]
             eprintln!("开始下载: {url} 到 {}", config.output_path);
-            if let Err(e) = Self::download_stream(&url, &config, &client, &is_running).await {
+            if let Err(e) =
+                Self::download_stream(&url, &config, &client, &is_running, &context).await
+            {
                 #[cfg(debug_assertions)]
                 eprintln!("下载失败: {e}");
 
-                let _ = entity.update(cx, |card, cx| {
-                    card.status = RoomCardStatus::Error(format!("下载失败: {e:?}"));
-                    cx.notify();
-                });
-
                 return Err(e);
             }
+
+            // 下载完成
+            #[cfg(debug_assertions)]
+            eprintln!("下载完成: {}", config.output_path);
 
             Ok(())
         })
@@ -95,11 +113,34 @@ impl Downloader for HttpStreamDownloader {
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.status = DownloadStatus::Paused;
 
+        self.emit_event(DownloadEvent::Paused);
+        Ok(())
+    }
+
+    fn pause(&mut self) -> Result<()> {
+        self.is_running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.status = DownloadStatus::Paused;
+
+        self.emit_event(DownloadEvent::Paused);
+        Ok(())
+    }
+
+    fn resume(&mut self) -> Result<()> {
+        self.is_running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.status = DownloadStatus::Downloading;
+
+        self.emit_event(DownloadEvent::Resumed);
         Ok(())
     }
 
     fn status(&self) -> DownloadStatus {
         self.status.clone()
+    }
+
+    fn stats(&self) -> DownloadStats {
+        self.stats.clone()
     }
 }
 
@@ -109,12 +150,13 @@ impl HttpStreamDownloader {
         config: &DownloadConfig,
         client: &HttpClient,
         is_running: &Arc<std::sync::atomic::AtomicBool>,
+        context: &DownloaderContext,
     ) -> Result<()> {
         let mut retry_count = 0;
         let initial_delay = std::time::Duration::from_secs(1);
 
         loop {
-            match Self::try_download_stream(url, config, client, is_running).await {
+            match Self::try_download_stream(url, config, client, is_running, context).await {
                 Ok(_) => return Ok(()),
                 Err(e) => {
                     retry_count += 1;
@@ -174,6 +216,7 @@ impl HttpStreamDownloader {
         config: &DownloadConfig,
         client: &HttpClient,
         is_running: &Arc<std::sync::atomic::AtomicBool>,
+        context: &DownloaderContext,
     ) -> Result<()> {
         let request = Request::builder()
             .uri(url)
@@ -201,7 +244,12 @@ impl HttpStreamDownloader {
         let body = response.body_mut();
         let mut buffer = [0; 8192];
         let mut consecutive_errors = 0;
+        let mut bytes_downloaded = 0u64;
+        let start_time = Instant::now();
+        let mut last_progress_update = Instant::now();
+
         const MAX_CONSECUTIVE_ERRORS: u32 = 3;
+        const PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 
         loop {
             if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
@@ -217,6 +265,28 @@ impl HttpStreamDownloader {
 
                     if let Err(e) = file.write_all(&buffer[..bytes_read]) {
                         return Err(anyhow::anyhow!("写入文件失败: {}", e));
+                    }
+
+                    bytes_downloaded += bytes_read as u64;
+
+                    // 定期更新进度
+                    let now = Instant::now();
+                    if now.duration_since(last_progress_update) >= PROGRESS_UPDATE_INTERVAL {
+                        let duration_ms = start_time.elapsed().as_millis() as u64;
+                        let download_speed_kbps = if duration_ms > 0 {
+                            (bytes_downloaded as f32 * 8.0) / (duration_ms as f32) // 转换为 kbps
+                        } else {
+                            0.0
+                        };
+
+                        // 发送进度事件到队列
+                        context.push_event(DownloadEvent::Progress {
+                            bytes_downloaded,
+                            download_speed_kbps,
+                            duration_ms,
+                        });
+
+                        last_progress_update = now;
                     }
 
                     // 重置连续错误计数

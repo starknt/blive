@@ -184,7 +184,7 @@ impl RoomCard {
         let record_dir = global_setting.record_dir;
 
         cx.spawn(async move |cx| {
-            // 创建下载器
+            // 创建下载器 - 现在只需要传递WeakEntity给构造函数
             let mut downloader = BLiveDownloader::new(
                 room_info.room_id,
                 global_setting.quality,
@@ -200,14 +200,11 @@ impl RoomCard {
                 .await
             {
                 Ok(_) => {
-                    let _ = task_card.update(cx, |card, _| {
-                        card.status = RoomCardStatus::Waiting;
-                    });
+                    // 下载成功完成，状态会通过事件回调自动更新
                 }
                 Err(e) => {
-                    let _ = task_card.update(cx, |card, _| {
-                        card.status = RoomCardStatus::Error(format!("下载失败: {e}"));
-                    });
+                    // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
+                    eprintln!("下载器启动失败: {e}");
                 }
             }
         })

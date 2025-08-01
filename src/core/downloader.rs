@@ -15,7 +15,6 @@ use gpui::{AsyncApp, WeakEntity};
 use rand::Rng;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, time::Duration};
 
-// 下载器上下文 - 用于共享状态和资源
 #[derive(Clone)]
 pub struct DownloaderContext {
     pub entity: WeakEntity<RoomCard>,
@@ -53,7 +52,6 @@ impl DownloaderContext {
         }
     }
 
-    /// 更新card状态 - 在有AsyncApp上下文时调用
     pub fn update_card_status(&self, cx: &mut AsyncApp, status: RoomCardStatus) {
         if let Some(entity) = self.entity.upgrade() {
             let _ = entity.update(cx, |card, cx| {
@@ -194,7 +192,7 @@ impl DownloaderContext {
             while context.is_running() {
                 // 每100ms处理一次事件队列
                 cx.background_executor()
-                    .timer(Duration::from_millis(100))
+                    .timer(Duration::from_millis(1000))
                     .await;
 
                 let processed = context.process_events(cx);
@@ -702,11 +700,6 @@ impl BLiveDownloader {
         // 处理文件路径冲突
         let file_path = self.resolve_file_path(record_dir, &filename, ext)?;
 
-        // 发送开始事件
-        self.context.push_event(DownloadEvent::Started {
-            file_path: file_path.clone(),
-        });
-
         // 根据下载器类型创建具体的下载器
         let mut final_downloader = match downloader_type {
             DownloaderType::HttpStream(_) => {
@@ -758,53 +751,6 @@ impl BLiveDownloader {
                 }
             },
         }
-
-        // 启动简化的进度监控任务
-        let context = self.context.clone();
-        let output_path = file_path.clone();
-        cx.spawn(async move |_cx| {
-            let start_time = std::time::Instant::now();
-
-            loop {
-                // 每秒检查一次文件大小
-                std::thread::sleep(Duration::from_secs(1));
-
-                // 检查是否应该停止监控
-                if !context.is_running() {
-                    break;
-                }
-
-                if let Ok(metadata) = std::fs::metadata(&output_path) {
-                    let current_size = metadata.len();
-                    let elapsed = start_time.elapsed();
-
-                    // 计算下载速度 (bytes per second -> kbps)
-                    let speed_kbps = if elapsed.as_secs() > 0 {
-                        (current_size as f32 * 8.0) / (elapsed.as_secs() as f32 * 1000.0)
-                    } else {
-                        0.0
-                    };
-
-                    // 更新统计信息
-                    context.update_stats(|stats| {
-                        stats.bytes_downloaded = current_size;
-                        stats.download_speed_kbps = speed_kbps;
-                        stats.duration_ms = elapsed.as_millis() as u64;
-                    });
-
-                    // 推送进度事件到队列
-                    context.push_event(DownloadEvent::Progress {
-                        bytes_downloaded: current_size,
-                        download_speed_kbps: speed_kbps,
-                        duration_ms: elapsed.as_millis() as u64,
-                    });
-                } else {
-                    // 文件不存在，可能下载已完成或出错
-                    break;
-                }
-            }
-        })
-        .detach();
 
         self.downloader = Some(final_downloader);
 

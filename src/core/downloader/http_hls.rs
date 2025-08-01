@@ -1,5 +1,3 @@
-#![allow(clippy::collapsible_if)]
-
 use crate::core::downloader::{
     DownloadConfig, DownloadEvent, DownloadStats, DownloadStatus, Downloader, DownloaderContext,
 };
@@ -7,8 +5,6 @@ use anyhow::{Context, Result};
 use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::command::FfmpegCommand;
 use ffmpeg_sidecar::event::FfmpegEvent;
-use futures::StreamExt;
-use futures::channel::mpsc;
 use gpui::AsyncApp;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -17,18 +13,10 @@ pub struct HttpHlsDownloader {
     url: String,
     config: DownloadConfig,
     status: DownloadStatus,
-    is_running: Arc<std::sync::atomic::AtomicBool>,
     inner: Arc<Mutex<Option<FfmpegChild>>>,
     stats: DownloadStats,
     start_time: Option<Instant>,
     context: DownloaderContext,
-}
-
-#[derive(Debug)]
-enum HttpHlsDownloaderEvent {
-    Progress(f32),
-    Done,
-    Error(String),
 }
 
 impl HttpHlsDownloader {
@@ -37,7 +25,6 @@ impl HttpHlsDownloader {
             url,
             config,
             status: DownloadStatus::NotStarted,
-            is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             inner: Arc::new(Mutex::new(None)),
             stats: DownloadStats::default(),
             start_time: None,
@@ -100,8 +87,7 @@ impl Downloader for HttpHlsDownloader {
         // 更新状态
         self.status = DownloadStatus::Downloading;
         self.start_time = Some(Instant::now());
-        self.is_running
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.context.set_running(true);
 
         // 发送开始事件
         self.emit_event(DownloadEvent::Started {
@@ -109,44 +95,12 @@ impl Downloader for HttpHlsDownloader {
         });
 
         let inner = self.inner.clone();
-        let is_running = self.is_running.clone();
+        let context_for_check = self.context.clone();
         let config_clone = config.clone();
-        let (mut tx, mut rx) = mpsc::channel::<HttpHlsDownloaderEvent>(100);
 
-        // 创建事件处理任务
         let context = self.context.clone();
-        cx.spawn(async move |_cx| {
-            while let Some(event) = rx.next().await {
-                match event {
-                    HttpHlsDownloaderEvent::Progress(kbs) => {
-                        context.push_event(DownloadEvent::Progress {
-                            bytes_downloaded: 0, // FFmpeg doesn't provide exact bytes
-                            download_speed_kbps: kbs,
-                            duration_ms: 0, // Could be calculated if needed
-                        });
-                    }
-                    HttpHlsDownloaderEvent::Done => {
-                        let file_size = std::fs::metadata(&config_clone.output_path)
-                            .map(|m| m.len())
-                            .unwrap_or(0);
-
-                        context.push_event(DownloadEvent::Completed {
-                            file_path: config_clone.output_path.clone(),
-                            file_size,
-                        });
-                        break;
-                    }
-                    HttpHlsDownloaderEvent::Error(err) => {
-                        context.push_event(DownloadEvent::Error {
-                            error: err,
-                            is_recoverable: true,
-                        });
-                    }
-                }
-            }
-        })
-        .detach();
-
+        let start_time = Instant::now();
+        let mut bytes_downloaded = 0;
         cx.background_executor()
             .spawn(async move {
                 let process = Self::download_stream(&url, &config)
@@ -164,32 +118,37 @@ impl Downloader for HttpHlsDownloader {
                 if let Some(ref mut process) = *lock {
                     if let Ok(iter) = process.iter() {
                         for event in iter {
-                            if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+                            if !context_for_check.is_running() {
                                 break;
                             }
 
                             match event {
                                 FfmpegEvent::Progress(progress) => {
-                                    // println!("progress: {progress:?}");
-                                    if let Err(e) = tx.try_send(HttpHlsDownloaderEvent::Progress(
-                                        progress.bitrate_kbps,
-                                    )) {
-                                        eprintln!("发送进度事件失败: {e}");
-                                    }
+                                    bytes_downloaded += progress.size_kb as u64;
+                                    context.push_event(DownloadEvent::Progress {
+                                        bytes_downloaded,
+                                        download_speed_kbps: progress.bitrate_kbps,
+                                        duration_ms: start_time.elapsed().as_millis() as u64,
+                                    });
                                 }
                                 FfmpegEvent::Done => {
-                                    if let Err(e) = tx.try_send(HttpHlsDownloaderEvent::Done) {
-                                        eprintln!("发送完成事件失败: {e}");
-                                    }
+                                    context.push_event(DownloadEvent::Completed {
+                                        file_path: config_clone.output_path.clone(),
+                                        file_size: 0,
+                                    });
                                 }
                                 FfmpegEvent::LogEOF => {
-                                    if let Err(e) = tx.try_send(HttpHlsDownloaderEvent::Done) {
-                                        eprintln!("发送完成事件失败: {e}");
-                                    }
+                                    context.push_event(DownloadEvent::Completed {
+                                        file_path: config_clone.output_path.clone(),
+                                        file_size: 0,
+                                    });
                                 }
                                 FfmpegEvent::Log(level, msg) => {
                                     if level == ffmpeg_sidecar::event::LogLevel::Fatal {
-                                        let _ = tx.try_send(HttpHlsDownloaderEvent::Error(msg));
+                                        context.push_event(DownloadEvent::Error {
+                                            error: msg,
+                                            is_recoverable: true,
+                                        });
                                     }
                                 }
                                 _ => {}
@@ -205,8 +164,7 @@ impl Downloader for HttpHlsDownloader {
 
     fn stop(&mut self) -> Result<()> {
         // 设置停止标志
-        self.is_running
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.context.set_running(false);
         self.status = DownloadStatus::Paused;
 
         self.emit_event(DownloadEvent::Paused);
@@ -224,8 +182,7 @@ impl Downloader for HttpHlsDownloader {
     }
 
     fn pause(&mut self) -> Result<()> {
-        self.is_running
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.context.set_running(false);
         self.status = DownloadStatus::Paused;
 
         self.emit_event(DownloadEvent::Paused);
@@ -233,8 +190,7 @@ impl Downloader for HttpHlsDownloader {
     }
 
     fn resume(&mut self) -> Result<()> {
-        self.is_running
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.context.set_running(true);
         self.status = DownloadStatus::Downloading;
 
         self.emit_event(DownloadEvent::Resumed);

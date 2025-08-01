@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 pub mod app;
 pub mod assets;
 pub mod components;

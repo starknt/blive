@@ -8,7 +8,6 @@ use gpui::AsyncApp;
 use gpui::http_client::{AsyncBody, Method, Request};
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub struct HttpStreamDownloader {
@@ -16,7 +15,6 @@ pub struct HttpStreamDownloader {
     config: DownloadConfig,
     status: DownloadStatus,
     client: HttpClient,
-    is_running: Arc<std::sync::atomic::AtomicBool>,
     stats: DownloadStats,
     start_time: Option<Instant>,
     context: DownloaderContext,
@@ -34,7 +32,6 @@ impl HttpStreamDownloader {
             config,
             status: DownloadStatus::NotStarted,
             client,
-            is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stats: DownloadStats::default(),
             start_time: None,
             context,
@@ -69,7 +66,6 @@ impl Downloader for HttpStreamDownloader {
         let url = self.url.clone();
         let config = self.config.clone();
         let client = self.client.clone();
-        let is_running = self.is_running.clone();
         let context = self.context.clone();
 
         // 检查输出路径
@@ -78,7 +74,7 @@ impl Downloader for HttpStreamDownloader {
         // 更新状态
         self.status = DownloadStatus::Downloading;
         self.start_time = Some(Instant::now());
-        is_running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.context.set_running(true);
 
         // 发送开始事件
         self.emit_event(DownloadEvent::Started {
@@ -88,9 +84,7 @@ impl Downloader for HttpStreamDownloader {
         cx.spawn(async move |_cx| {
             #[cfg(debug_assertions)]
             eprintln!("开始下载: {url} 到 {}", config.output_path);
-            if let Err(e) =
-                Self::download_stream(&url, &config, &client, &is_running, &context).await
-            {
+            if let Err(e) = Self::download_stream(&url, &config, &client, &context).await {
                 #[cfg(debug_assertions)]
                 eprintln!("下载失败: {e}");
 
@@ -109,8 +103,7 @@ impl Downloader for HttpStreamDownloader {
     }
 
     fn stop(&mut self) -> Result<()> {
-        self.is_running
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.context.set_running(false);
         self.status = DownloadStatus::Paused;
 
         self.emit_event(DownloadEvent::Paused);
@@ -118,8 +111,7 @@ impl Downloader for HttpStreamDownloader {
     }
 
     fn pause(&mut self) -> Result<()> {
-        self.is_running
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.context.set_running(false);
         self.status = DownloadStatus::Paused;
 
         self.emit_event(DownloadEvent::Paused);
@@ -127,8 +119,7 @@ impl Downloader for HttpStreamDownloader {
     }
 
     fn resume(&mut self) -> Result<()> {
-        self.is_running
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.context.set_running(true);
         self.status = DownloadStatus::Downloading;
 
         self.emit_event(DownloadEvent::Resumed);
@@ -149,14 +140,13 @@ impl HttpStreamDownloader {
         url: &str,
         config: &DownloadConfig,
         client: &HttpClient,
-        is_running: &Arc<std::sync::atomic::AtomicBool>,
         context: &DownloaderContext,
     ) -> Result<()> {
         let mut retry_count = 0;
         let initial_delay = std::time::Duration::from_secs(1);
 
         loop {
-            match Self::try_download_stream(url, config, client, is_running, context).await {
+            match Self::try_download_stream(url, config, client, context).await {
                 Ok(_) => return Ok(()),
                 Err(e) => {
                     retry_count += 1;
@@ -185,7 +175,7 @@ impl HttpStreamDownloader {
 
                         // 使用指数退避延迟
                         for _ in 0..(delay.as_millis() / 10) {
-                            if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+                            if !context.is_running() {
                                 return Ok(());
                             }
                             std::thread::yield_now();
@@ -200,7 +190,7 @@ impl HttpStreamDownloader {
                         // 对于非网络错误，使用较短的延迟
                         let delay = std::time::Duration::from_secs(2_u64.pow(retry_count.min(5)));
                         for _ in 0..(delay.as_millis() / 10) {
-                            if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+                            if !context.is_running() {
                                 return Ok(());
                             }
                             std::thread::yield_now();
@@ -215,7 +205,6 @@ impl HttpStreamDownloader {
         url: &str,
         config: &DownloadConfig,
         client: &HttpClient,
-        is_running: &Arc<std::sync::atomic::AtomicBool>,
         context: &DownloaderContext,
     ) -> Result<()> {
         let request = Request::builder()
@@ -252,7 +241,7 @@ impl HttpStreamDownloader {
         const PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 
         loop {
-            if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
+            if !context.is_running() {
                 return Ok(());
             }
 

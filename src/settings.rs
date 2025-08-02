@@ -1,5 +1,6 @@
 use directories::ProjectDirs;
 
+use crate::logger::log_user_action;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::Path, sync::LazyLock};
@@ -191,6 +192,8 @@ pub struct GlobalSettings {
 
 impl GlobalSettings {
     pub fn load() -> Self {
+        log_user_action("加载应用设置", None);
+
         // 读取配置文件
         let settings_path = &SETTINGS_FILE;
         let settings_path: &str = settings_path.as_str();
@@ -199,20 +202,43 @@ impl GlobalSettings {
             && let Ok(file_content) = std::fs::read_to_string(path)
         {
             if let Ok(settings) = serde_json::from_str::<GlobalSettings>(&file_content) {
+                log_user_action("设置文件加载成功", Some(&format!("路径: {settings_path}")));
                 return settings;
             }
 
+            log_user_action(
+                "设置文件解析失败，使用默认设置",
+                Some(&format!("路径: {settings_path}")),
+            );
             return GlobalSettings::default();
         }
 
+        log_user_action(
+            "设置文件不存在，使用默认设置",
+            Some(&format!("路径: {settings_path}")),
+        );
         GlobalSettings::default()
     }
 
     pub fn save(&self) {
+        log_user_action("保存应用设置", None);
+
         let settings_path = &SETTINGS_FILE;
         let settings_path: &str = settings_path.as_str();
         let path = Path::new(&settings_path);
-        std::fs::write(path, serde_json::to_string(self).unwrap()).unwrap();
+
+        match serde_json::to_string_pretty(self) {
+            Ok(json_str) => {
+                if let Err(e) = std::fs::write(path, json_str) {
+                    log_user_action("设置保存失败", Some(&format!("错误: {e}")));
+                } else {
+                    log_user_action("设置保存成功", Some(&format!("路径: {settings_path}")));
+                }
+            }
+            Err(e) => {
+                log_user_action("设置序列化失败", Some(&format!("错误: {e}")));
+            }
+        }
     }
 }
 

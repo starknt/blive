@@ -10,7 +10,7 @@ use gpui_component::{
     popup_menu::PopupMenuExt,
 };
 
-use crate::state::AppState;
+use crate::{logger::log_config_change, state::AppState};
 
 static THEMES: LazyLock<HashMap<SharedString, ThemeConfig>> = LazyLock::new(|| {
     fn parse_themes(source: &str) -> ThemeSet {
@@ -87,8 +87,11 @@ impl Render for ThemeSwitcher {
         div()
             .id("theme-switcher")
             .on_action(cx.listener(|this, switch: &SwitchTheme, _, cx| {
+                let old_theme = this.current_theme_name.clone();
                 this.current_theme_name = switch.0.clone();
                 let theme_name = this.current_theme_name.clone();
+
+                log_config_change("主题切换", &format!("从 {old_theme} 切换到 {theme_name}"));
 
                 if let Some(theme_config) = THEMES.get(&theme_name) {
                     Theme::global_mut(cx).apply_config(theme_config);

@@ -8,6 +8,7 @@ use crate::core::http_client::HttpClient;
 use crate::core::http_client::room::LiveRoomInfoData;
 use crate::core::http_client::stream::{LiveRoomStreamUrl, PlayStream};
 use crate::core::http_client::user::LiveUserInfo;
+use crate::logger::{log_recording_error, log_recording_start, log_recording_stop};
 use crate::settings::{DEFAULT_RECORD_NAME, LiveProtocol, Quality, StreamCodec, VideoContainer};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
@@ -159,17 +160,18 @@ impl DownloaderContext {
     fn log_event(&self, event: &DownloadEvent) {
         match event {
             DownloadEvent::Started { file_path } => {
-                #[cfg(debug_assertions)]
-                eprintln!("🎬 开始录制到: {file_path}");
+                log_recording_start(self.room_id, &format!("文件: {file_path}"));
             }
             DownloadEvent::Progress {
                 bytes_downloaded,
                 download_speed_kbps,
                 duration_ms,
             } => {
+                // 只在调试模式下记录详细进度，避免日志过多
                 #[cfg(debug_assertions)]
-                eprintln!(
-                    "📊 下载进度: {:.2}MB, {:.1}kb/s, {}秒",
+                tracing::debug!(
+                    "录制进度 - 房间: {}, 已下载: {:.2}MB, 速度: {:.1}kb/s, 时长: {}秒",
+                    self.room_id,
                     utils::pretty_bytes(*bytes_downloaded),
                     *download_speed_kbps,
                     duration_ms / 1000
@@ -177,23 +179,32 @@ impl DownloaderContext {
             }
             DownloadEvent::Error { error } => {
                 if error.is_recoverable() {
-                    eprintln!("⚠️  网络异常，正在重连: {error}");
+                    log_recording_error(self.room_id, &format!("网络异常，正在重连: {error}"));
                 } else {
-                    eprintln!("❌ 录制失败: {error}");
+                    log_recording_error(self.room_id, &format!("录制失败: {error}"));
                 }
             }
             DownloadEvent::Reconnecting {
                 attempt,
                 delay_secs,
             } => {
-                eprintln!("🔄 网络中断，第{attempt}次重连 ({delay_secs}秒后)");
+                log_recording_error(
+                    self.room_id,
+                    &format!("网络中断，第{attempt}次重连 ({delay_secs}秒后)"),
+                );
             }
             DownloadEvent::Completed {
                 file_path,
                 file_size,
             } => {
                 let mb_size = *file_size as f64 / 1024.0 / 1024.0;
-                eprintln!("✅ 录制完成: {file_path} ({mb_size:.2}MB)");
+                log_recording_stop(self.room_id);
+                tracing::info!(
+                    "录制完成 - 房间: {}, 文件: {}, 大小: {:.2}MB",
+                    self.room_id,
+                    file_path,
+                    mb_size
+                );
             }
         }
     }
@@ -766,8 +777,12 @@ impl leon::Values for DownloaderFilenameTemplate {
             "up_name" => Some(Cow::Borrowed(&self.up_name)),
             "room_id" => Some(Cow::Owned(self.room_id.to_string())),
             "datetime" => Some(Cow::Borrowed(&self.datetime)),
-            "room_title" => Some(Cow::Borrowed(&self.room_title[..10])),
-            "room_description" => Some(Cow::Borrowed(&self.room_description[..20])),
+            "room_title" => Some(Cow::Owned(
+                self.room_title.to_owned().chars().take(10).collect(),
+            )),
+            "room_description" => Some(Cow::Owned(
+                self.room_description.to_owned().chars().take(20).collect(),
+            )),
             "room_area_name" => Some(Cow::Borrowed(&self.room_area_name)),
             "date" => Some(Cow::Borrowed(&self.date)),
             _ => None,
@@ -1252,9 +1267,8 @@ impl BLiveDownloader {
                     self.update_card_status(
                         cx,
                         RoomCardStatus::Error(format!(
-                            "网络中断，第{}次重连 ({}秒后)",
-                            retry_count,
-                            delay.as_secs()
+                            "网络中断，第{retry_count}次重连 ({delay_secs}秒后)",
+                            delay_secs = delay.as_secs()
                         )),
                     );
 

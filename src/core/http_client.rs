@@ -1,8 +1,10 @@
+use crate::logger::{log_network_request, log_network_response};
 use anyhow::{Context, Result};
 use futures::AsyncReadExt;
 use gpui::http_client::{AsyncBody, HttpClient as GPUIHttpClient, Method, Request, Response};
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::time::Instant;
 
 pub mod room;
 pub mod stream;
@@ -24,17 +26,40 @@ impl HttpClient {
     }
 
     pub async fn send(&self, request: Request<AsyncBody>) -> Result<Response<AsyncBody>> {
-        self.inner
+        let method = request.method().to_string();
+        let url = request.uri().to_string();
+        let start_time = Instant::now();
+
+        log_network_request(&url, &method);
+
+        let result = self
+            .inner
             .send(request)
             .await
-            .context("Failed to send request")
+            .context("Failed to send request");
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+
+        match &result {
+            Ok(response) => {
+                log_network_response(response.status().as_u16(), duration_ms);
+            }
+            Err(_) => {
+                log_network_response(0, duration_ms);
+            }
+        }
+
+        result
     }
 
     pub async fn get_live_room_info(&self, room_id: u64) -> Result<room::LiveRoomInfoData> {
         let url = format!("https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}");
+        let start_time = Instant::now();
+
+        log_network_request(&url, "GET");
 
         let request = Request::builder()
-            .uri(url)
+            .uri(&url)
             .method(Method::GET)
             .body(AsyncBody::empty())
             .context("Failed to build request")?;
@@ -44,6 +69,9 @@ impl HttpClient {
             .send(request)
             .await
             .context("Failed to send request")?;
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        log_network_response(response.status().as_u16(), duration_ms);
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!("Failed to get live room info"));
@@ -64,9 +92,12 @@ impl HttpClient {
         let url = format!(
             "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id={room_id}&protocol=0,1&format=0,1,2&codec=0,1&qn={quality}"
         );
+        let start_time = Instant::now();
+
+        log_network_request(&url, "GET");
 
         let request = Request::builder()
-            .uri(url)
+            .uri(&url)
             .method(Method::GET)
             .body(AsyncBody::empty())
             .context("Failed to build request")?;
@@ -76,6 +107,9 @@ impl HttpClient {
             .send(request)
             .await
             .context("Failed to send request")?;
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        log_network_response(response.status().as_u16(), duration_ms);
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!("Failed to get live room stream url"));
@@ -93,9 +127,12 @@ impl HttpClient {
         let url = format!(
             "https://api.live.bilibili.com/live_user/v1/UserInfo/get_anchor_in_room?roomid={room_id}"
         );
+        let start_time = Instant::now();
+
+        log_network_request(&url, "GET");
 
         let request = Request::builder()
-            .uri(url)
+            .uri(&url)
             .method(Method::GET)
             .body(AsyncBody::empty())
             .context("Failed to build request")?;
@@ -105,6 +142,9 @@ impl HttpClient {
             .send(request)
             .await
             .context("Failed to send request")?;
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        log_network_response(response.status().as_u16(), duration_ms);
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!("Failed to get live room user info"));

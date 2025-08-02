@@ -1,4 +1,4 @@
-use blive::logger::create_default_logger;
+use blive::logger::{init_logger, log_app_shutdown, log_app_start};
 use blive::settings::{APP_NAME, DISPLAY_NAME};
 use blive::{app::BLiveApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
 use gpui::{
@@ -13,10 +13,9 @@ use reqwest_client::ReqwestClient;
 actions!(menu, [Quit]);
 
 fn main() {
-    // 初始化日志系统
-    let logger = create_default_logger().expect("无法创建日志管理器");
-    logger.init().expect("无法初始化日志系统");
-    logger.log_app_start(env!("CARGO_PKG_VERSION"));
+    // 初始化日志系统 - 使用LazyLock简化初始化
+    init_logger().expect("无法初始化日志系统");
+    log_app_start(env!("CARGO_PKG_VERSION"));
 
     let app = Application::new().with_assets(Assets);
 
@@ -46,8 +45,8 @@ fn main() {
                 state.settings.save();
             });
 
-            // 记录应用关闭日志
-            logger.log_app_shutdown();
+            // 记录应用关闭日志 - 使用全局日志函数
+            log_app_shutdown();
 
             async {}
         })

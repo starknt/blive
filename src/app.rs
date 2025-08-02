@@ -10,6 +10,7 @@ use gpui_component::{
 
 use crate::{
     components::{RoomCard, RoomInput, RoomInputEvent},
+    logger::{log_recording_error, log_user_action},
     settings::RoomSettings,
     state::AppState,
     title_bar::AppTitleBar,
@@ -25,10 +26,15 @@ pub struct BLiveApp {
 impl BLiveApp {
     /// 初始化应用
     pub fn init(cx: &mut App) {
+        log_user_action("初始化主应用组件", None);
+
         let state = AppState::global(cx);
         for settings in state.settings.rooms.clone() {
             let client = state.client.clone();
             let room_id = settings.room_id;
+
+            log_user_action("加载房间", Some(&format!("房间号: {room_id}")));
+
             cx.spawn(async move |cx| {
                 let (room_data, user_data) = futures::join!(
                     client.get_live_room_info(room_id),
@@ -43,8 +49,11 @@ impl BLiveApp {
                             RoomCard::view(room_data, user_data.info, settings.clone(), cx, client);
 
                         state.room_entities.push(room);
+                        log_user_action("房间卡片创建成功", Some(&format!("房间号: {room_id}")));
                     })
                     .unwrap();
+                } else {
+                    log_recording_error(room_id, "获取房间信息失败");
                 };
             })
             .detach();
@@ -82,6 +91,7 @@ impl BLiveApp {
     ) {
         let RoomInputEvent::RoomInputChange(room_num) = event;
         self.room_num = *room_num;
+        log_user_action("房间号输入变化", Some(&format!("新房间号: {room_num}")));
     }
 
     /// 添加录制房间
@@ -97,12 +107,15 @@ impl BLiveApp {
                 .iter()
                 .any(|room| room.room_id == room_num)
             {
+                log_user_action("尝试添加重复房间", Some(&format!("房间号: {room_num}")));
                 window.push_notification(
                     Notification::warning(format!("直播间 {room_num} 已监听")),
                     cx,
                 );
                 return;
             }
+
+            log_user_action("点击添加录制按钮", Some(&format!("房间号: {room_num}")));
 
             cx.spawn(async move |_, cx| {
                 let (room_data, user_data) = futures::join!(
@@ -120,11 +133,16 @@ impl BLiveApp {
 
                         state.room_entities.push(room);
                         state.settings.rooms.push(settings);
+                        log_user_action("新房间添加成功", Some(&format!("房间号: {room_num}")));
                     })
                     .unwrap();
+                } else {
+                    log_recording_error(room_num, "获取房间信息失败");
                 };
             })
             .detach();
+        } else {
+            log_user_action("尝试添加无效房间", Some("房间号为0"));
         }
     }
 }

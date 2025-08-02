@@ -7,6 +7,7 @@ use crate::{
             user::LiveUserInfo,
         },
     },
+    logger::log_user_action,
     settings::RoomSettings,
     state::AppState,
 };
@@ -154,6 +155,9 @@ impl RoomCard {
     }
 
     fn on_delete(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut gpui::Context<Self>) {
+        let room_id = self.settings.room_id;
+        log_user_action("删除房间", Some(&format!("房间号: {room_id}")));
+
         let this = cx.entity();
         cx.update_global(|state: &mut AppState, _| {
             state.room_entities = state
@@ -166,10 +170,12 @@ impl RoomCard {
                 .settings
                 .rooms
                 .iter()
-                .filter(|room| room.room_id != self.settings.room_id)
+                .filter(|room| room.room_id != room_id)
                 .cloned()
                 .collect();
         });
+
+        log_user_action("房间删除完成", Some(&format!("房间号: {room_id}")));
     }
 }
 
@@ -334,17 +340,37 @@ impl Render for RoomCard {
                                                         }
                                                     })
                                                     .on_click(cx.listener(|card, _, _, cx| {
-                                                        card.status = match &card.status {
+                                                        let room_id = card.settings.room_id;
+                                                        let new_status = match &card.status {
                                                             RoomCardStatus::Waiting => {
+                                                                log_user_action(
+                                                                    "开始录制",
+                                                                    Some(&format!(
+                                                                        "房间号: {room_id}"
+                                                                    )),
+                                                                );
                                                                 RoomCardStatus::Recording(0.0)
                                                             }
                                                             RoomCardStatus::Recording(_) => {
+                                                                log_user_action(
+                                                                    "停止录制",
+                                                                    Some(&format!(
+                                                                        "房间号: {room_id}"
+                                                                    )),
+                                                                );
                                                                 RoomCardStatus::Waiting
                                                             }
                                                             RoomCardStatus::Error(_) => {
+                                                                log_user_action(
+                                                                    "重试录制",
+                                                                    Some(&format!(
+                                                                        "房间号: {room_id}"
+                                                                    )),
+                                                                );
                                                                 RoomCardStatus::Waiting
                                                             }
                                                         };
+                                                        card.status = new_status;
                                                         cx.notify();
                                                     })),
                                             ])

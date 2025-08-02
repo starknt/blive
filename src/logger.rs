@@ -1,15 +1,39 @@
 use crate::error::{AppError, AppResult};
+use crate::settings::APP_NAME;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{LazyLock, RwLock};
 use tracing::Level;
 use tracing_subscriber::{
     FmtSubscriber,
     fmt::{format::FmtSpan, time::SystemTime},
 };
 
+/// 默认日志路径，使用LazyLock进行惰性初始化
+static DEFAULT_LOG_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
+    if cfg!(debug_assertions) {
+        PathBuf::from("logs/app.log")
+    } else {
+        let mut path = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        path.push(".config");
+        path.push(APP_NAME);
+        path.push("logs");
+        path.push("app.log");
+        path
+    }
+});
+
+/// 全局日志管理器实例
+static GLOBAL_LOGGER: LazyLock<RwLock<LoggerManager>> = LazyLock::new(|| {
+    let logger = LoggerManager::new(Level::INFO, Some(DEFAULT_LOG_PATH.clone()))
+        .expect("无法创建全局日志管理器");
+    RwLock::new(logger)
+});
+
 pub struct LoggerManager {
     log_file: Option<PathBuf>,
     log_level: Level,
+    initialized: bool,
 }
 
 impl LoggerManager {
@@ -25,11 +49,16 @@ impl LoggerManager {
         Ok(Self {
             log_file,
             log_level,
+            initialized: false,
         })
     }
 
     /// 初始化日志系统
-    pub fn init(&self) -> AppResult<()> {
+    pub fn init(&mut self) -> AppResult<()> {
+        if self.initialized {
+            return Ok(());
+        }
+
         let builder = FmtSubscriber::builder()
             .with_timer(SystemTime)
             .with_level(true)
@@ -43,6 +72,7 @@ impl LoggerManager {
         tracing::subscriber::set_global_default(subscriber)
             .map_err(|e| AppError::Unknown(format!("无法设置日志订阅者: {e}")))?;
 
+        self.initialized = true;
         Ok(())
     }
 
@@ -105,6 +135,7 @@ impl Default for LoggerManager {
         Self {
             log_file: None,
             log_level: Level::INFO,
+            initialized: false,
         }
     }
 }
@@ -130,24 +161,98 @@ impl From<LogLevel> for Level {
     }
 }
 
-/// 创建默认日志管理器
-pub fn create_default_logger() -> AppResult<LoggerManager> {
-    let log_level = Level::INFO;
-    let log_file = get_default_log_path();
+/// 初始化全局日志系统
+pub fn init_logger() -> AppResult<()> {
+    let mut logger = GLOBAL_LOGGER
+        .write()
+        .map_err(|e| AppError::Unknown(format!("无法获取日志管理器写锁: {e}")))?;
+    logger.init()
+}
 
-    LoggerManager::new(log_level, Some(log_file))
+/// 设置日志级别
+pub fn set_log_level(level: LogLevel) -> AppResult<()> {
+    let mut logger = GLOBAL_LOGGER
+        .write()
+        .map_err(|e| AppError::Unknown(format!("无法获取日志管理器写锁: {e}")))?;
+    logger.log_level = level.into();
+    Ok(())
 }
 
 /// 获取默认日志路径
-fn get_default_log_path() -> PathBuf {
-    if cfg!(debug_assertions) {
-        PathBuf::from("logs/app.log")
-    } else {
-        let mut path = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push(".config");
-        path.push("blive");
-        path.push("logs");
-        path.push("app.log");
-        path
+pub fn get_default_log_path() -> &'static PathBuf {
+    &DEFAULT_LOG_PATH
+}
+
+// 全局日志记录函数，方便其他模块使用
+
+/// 记录应用启动日志
+pub fn log_app_start(version: &str) {
+    if let Ok(logger) = GLOBAL_LOGGER.read() {
+        logger.log_app_start(version);
     }
+}
+
+/// 记录应用关闭日志
+pub fn log_app_shutdown() {
+    if let Ok(logger) = GLOBAL_LOGGER.read() {
+        logger.log_app_shutdown();
+    }
+}
+
+/// 记录录制开始
+pub fn log_recording_start(room_id: u64, quality: &str) {
+    if let Ok(logger) = GLOBAL_LOGGER.read() {
+        logger.log_recording_start(room_id, quality);
+    }
+}
+
+/// 记录录制停止
+pub fn log_recording_stop(room_id: u64) {
+    if let Ok(logger) = GLOBAL_LOGGER.read() {
+        logger.log_recording_stop(room_id);
+    }
+}
+
+/// 记录录制错误
+pub fn log_recording_error(room_id: u64, error: &str) {
+    if let Ok(logger) = GLOBAL_LOGGER.read() {
+        logger.log_recording_error(room_id, error);
+    }
+}
+
+/// 记录网络请求
+pub fn log_network_request(url: &str, method: &str) {
+    if let Ok(logger) = GLOBAL_LOGGER.read() {
+        logger.log_network_request(url, method);
+    }
+}
+
+/// 记录网络响应
+pub fn log_network_response(status: u16, duration_ms: u64) {
+    if let Ok(logger) = GLOBAL_LOGGER.read() {
+        logger.log_network_response(status, duration_ms);
+    }
+}
+
+/// 记录配置变更
+pub fn log_config_change(key: &str, value: &str) {
+    if let Ok(logger) = GLOBAL_LOGGER.read() {
+        logger.log_config_change(key, value);
+    }
+}
+
+/// 记录用户操作
+pub fn log_user_action(action: &str, details: Option<&str>) {
+    if let Ok(logger) = GLOBAL_LOGGER.read() {
+        logger.log_user_action(action, details);
+    }
+}
+
+/// 创建默认日志管理器（保持向后兼容性）
+#[deprecated(since = "0.1.0", note = "请使用 init_logger() 函数代替")]
+pub fn create_default_logger() -> AppResult<LoggerManager> {
+    let log_level = Level::INFO;
+    let log_file = DEFAULT_LOG_PATH.clone();
+
+    LoggerManager::new(log_level, Some(log_file))
 }

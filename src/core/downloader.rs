@@ -1073,7 +1073,7 @@ impl BLiveDownloader {
             }
 
             // 找到下一个可用的编号，但不超过最大限制
-            let next_part_number = if existing_parts.is_empty() {
+            let mut next_part_number = if existing_parts.is_empty() {
                 1
             } else {
                 existing_parts.sort();
@@ -1090,16 +1090,24 @@ impl BLiveDownloader {
             // 如果原文件存在且P1文件不存在，将原文件重命名为P1
             let first_part_name = format!("{file_stem}_P1.{ext}");
             let first_part_path = format!("{folder_path}/{first_part_name}");
+            let mut new_file_name = format!("{file_stem}_P2.{ext}");
+            #[allow(unused)]
+            let mut new_file_path = format!("{folder_path}/{new_file_name}");
 
             if initial_file_exists && !std::path::Path::new(&first_part_path).exists() {
                 std::fs::rename(&initial_file_path, &first_part_path).context(format!(
                     "重命名原文件失败: {initial_file_path} -> {first_part_path}"
                 ))?;
-            }
 
-            // 返回分P文件路径
-            let new_file_name = format!("{file_stem}_P{next_part_number}.{ext}");
-            let new_file_path = format!("{folder_path}/{new_file_name}");
+                // 返回分P文件路径 P2
+                next_part_number = 2;
+                new_file_name = format!("{file_stem}_P{next_part_number}.{ext}");
+                new_file_path = format!("{folder_path}/{new_file_name}");
+            } else {
+                // 返回分P文件路径
+                new_file_name = format!("{file_stem}_P{next_part_number}.{ext}");
+                new_file_path = format!("{folder_path}/{new_file_name}");
+            }
 
             // 如果达到最大分片数量，记录日志提示
             if next_part_number == MAX_PARTS && existing_parts.contains(&MAX_PARTS) {

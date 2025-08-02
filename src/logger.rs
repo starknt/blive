@@ -98,8 +98,13 @@ impl LoggerManager {
     }
 
     /// 记录录制开始
-    pub fn log_recording_start(&self, room_id: u64, quality: &str) {
-        tracing::info!("开始录制 - 房间: {}, 质量: {}", room_id, quality);
+    pub fn log_recording_start(&self, room_id: u64, quality: &str, file_path: &str) {
+        tracing::info!(
+            "开始录制 - 房间: {}, 质量: {}, 文件: {}",
+            room_id,
+            quality,
+            file_path
+        );
     }
 
     /// 记录录制停止
@@ -207,9 +212,9 @@ pub fn log_app_shutdown() {
 }
 
 /// 记录录制开始
-pub fn log_recording_start(room_id: u64, quality: &str) {
+pub fn log_recording_start(room_id: u64, quality: &str, file_path: &str) {
     if let Ok(logger) = GLOBAL_LOGGER.read() {
-        logger.log_recording_start(room_id, quality);
+        logger.log_recording_start(room_id, quality, file_path);
     }
 }
 

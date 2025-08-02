@@ -48,6 +48,12 @@ impl HttpStreamDownloader {
 
         let mut cmd = FfmpegCommand::new();
 
+        if config.overwrite {
+            cmd.overwrite();
+        } else {
+            cmd.no_overwrite();
+        }
+
         cmd.arg("-headers")
             .arg(user_agent_header)
             .arg("-headers")
@@ -55,21 +61,14 @@ impl HttpStreamDownloader {
             .arg("-i")
             .arg(url)
             .args(["-vf", "scale=1920:1080"])
+            .args(["-c:a", "aac"])
             .args(["-bsf:a", "aac_adtstoasc"])
             .arg("-c:v")
             .arg(match config.codec {
                 StreamCodec::AVC => "copy",
-                StreamCodec::HEVC => "copy", // 对于HTTP流，通常也是copy
+                StreamCodec::HEVC => "copy",
             })
-            .arg("-c:a")
-            .arg("copy")
             .arg(config.output_path.clone());
-
-        if config.overwrite {
-            cmd.overwrite();
-        } else {
-            cmd.no_overwrite();
-        }
 
         let process = cmd.spawn().context("无法启动FFmpeg进程")?;
 

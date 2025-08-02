@@ -47,6 +47,12 @@ impl HttpHlsDownloader {
 
         let mut cmd = FfmpegCommand::new();
 
+        if config.overwrite {
+            cmd.overwrite();
+        } else {
+            cmd.no_overwrite();
+        }
+
         cmd.arg("-headers")
             .arg(user_agent_header)
             .arg("-headers")
@@ -54,6 +60,7 @@ impl HttpHlsDownloader {
             .arg("-i")
             .arg(url)
             .args(["-vf", "scale=1920:1080"])
+            .args(["-c:a", "aac"])
             .args(["-bsf:a", "aac_adtstoasc"])
             .arg("-c:v")
             .arg(match config.codec {
@@ -61,12 +68,6 @@ impl HttpHlsDownloader {
                 StreamCodec::HEVC => "hevc",
             })
             .arg(config.output_path.clone());
-
-        if config.overwrite {
-            cmd.overwrite();
-        } else {
-            cmd.no_overwrite();
-        }
 
         let process = cmd.spawn().unwrap();
 

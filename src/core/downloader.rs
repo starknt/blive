@@ -160,7 +160,11 @@ impl DownloaderContext {
     fn log_event(&self, event: &DownloadEvent) {
         match event {
             DownloadEvent::Started { file_path } => {
-                log_recording_start(self.room_id, &format!("文件: {file_path}"));
+                log_recording_start(
+                    self.room_id,
+                    &self.quality.to_string(),
+                    &format!("文件: {file_path}"),
+                );
             }
             DownloadEvent::Progress {
                 bytes_downloaded,

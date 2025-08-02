@@ -53,6 +53,33 @@ static DEFAULT_RECORD_DIR: LazyLock<String> = LazyLock::new(|| {
 });
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
+pub enum Strategy {
+    // 优化CPU占用
+    #[serde(rename = "优化CPU占用")]
+    #[strum(serialize = "优化CPU占用")]
+    LowCPU,
+    // 优化硬盘占用
+    #[serde(rename = "优化硬盘占用")]
+    #[strum(serialize = "优化硬盘占用")]
+    LowDisk,
+    // 配置优先
+    #[default]
+    #[serde(rename = "配置优先")]
+    #[strum(serialize = "配置优先")]
+    PriorityConfig,
+}
+
+impl fmt::Display for Strategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Strategy::LowCPU => write!(f, "优化CPU占用"),
+            Strategy::LowDisk => write!(f, "优化硬盘占用"),
+            Strategy::PriorityConfig => write!(f, "配置优先"),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
 pub enum LiveProtocol {
     #[serde(rename = "http_stream")]
     #[strum(serialize = "http_stream")]
@@ -179,6 +206,9 @@ impl fmt::Display for StreamCodec {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalSettings {
+    /// 策略
+    pub strategy: Strategy,
+    /// 主题名称
     pub theme_name: SharedString,
     /// 录制质量
     pub quality: Quality,
@@ -245,6 +275,7 @@ impl GlobalSettings {
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
+            strategy: Strategy::default(),
             quality: Quality::default(),
             format: VideoContainer::default(),
             codec: StreamCodec::default(),

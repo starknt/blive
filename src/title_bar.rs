@@ -1,6 +1,6 @@
 use gpui::{ClickEvent, Entity, MouseButton, Subscription, Window, div, prelude::*};
 use gpui_component::{
-    ActiveTheme, ContextModal, IconName, Sizable, Theme, ThemeMode, TitleBar,
+    ActiveTheme, ContextModal, IconName, Sizable, StyledExt, Theme, ThemeMode, TitleBar,
     badge::Badge,
     button::{Button, ButtonVariants},
     scroll::ScrollbarShow,
@@ -51,6 +51,7 @@ impl Render for AppTitleBar {
         TitleBar::new()
             .child(
                 div()
+                    .font_bold()
                     .flex()
                     .items_center()
                     .child(self.title.clone() + " - " + "关注早早碎谢谢喵"),

@@ -1,10 +1,10 @@
 use crate::{
-    settings::{GlobalSettings, Quality, StreamCodec, VideoContainer},
+    settings::{GlobalSettings, Quality, Strategy, StreamCodec, VideoContainer},
     state::AppState,
 };
 use gpui::{App, ClickEvent, Entity, EventEmitter, Subscription, Window, prelude::*};
 use gpui_component::{
-    ContextModal,
+    ContextModal, StyledExt,
     button::{Button, ButtonVariants},
     dropdown::{Dropdown, DropdownState},
     h_flex,
@@ -17,6 +17,7 @@ use gpui_component::{
 pub struct SettingsModal {
     global_settings: GlobalSettings,
     record_dir_input: Entity<InputState>,
+    strategy_input: Entity<DropdownState<Vec<String>>>,
     quality_input: Entity<DropdownState<Vec<String>>>,
     format_input: Entity<DropdownState<Vec<String>>>,
     codec_input: Entity<DropdownState<Vec<String>>>,
@@ -39,6 +40,23 @@ impl SettingsModal {
             InputState::new(window, cx)
                 .placeholder("录制目录路径")
                 .default_value(global_settings.record_dir.clone())
+        });
+
+        let strategy_input = cx.new(|cx| {
+            let mut state = DropdownState::new(
+                vec![
+                    Strategy::LowCPU.to_string(),
+                    Strategy::LowDisk.to_string(),
+                    Strategy::PriorityConfig.to_string(),
+                ],
+                Some(0),
+                window,
+                cx,
+            );
+
+            state.set_selected_value(&global_settings.strategy.to_string(), window, cx);
+
+            state
         });
 
         let quality_input = cx.new(|cx| {
@@ -64,7 +82,11 @@ impl SettingsModal {
 
         let format_input = cx.new(|cx| {
             let mut state = DropdownState::new(
-                vec!["flv".to_string(), "mp4".to_string()],
+                vec![
+                    VideoContainer::FLV.to_string(),
+                    VideoContainer::FMP4.to_string(),
+                    VideoContainer::TS.to_string(),
+                ],
                 Some(0),
                 window,
                 cx,
@@ -94,6 +116,7 @@ impl SettingsModal {
         Self {
             global_settings,
             record_dir_input,
+            strategy_input,
             quality_input,
             format_input,
             codec_input,
@@ -194,7 +217,7 @@ impl Render for SettingsModal {
         v_flex()
             .gap_y_4()
             .child(
-                v_flex().gap_4().child(
+                v_flex().gap_y_5().child(
                     v_flex()
                         .gap_2()
                         .child(
@@ -217,18 +240,28 @@ impl Render for SettingsModal {
                         )
                         .child(
                             v_flex()
+                                .font_bold()
+                                .gap_2()
+                                .child(Text::String("录制策略".into()))
+                                .child(Dropdown::new(&self.strategy_input).max_w_32()),
+                        )
+                        .child(
+                            v_flex()
+                                .font_bold()
                                 .gap_2()
                                 .child(Text::String("录制质量".into()))
                                 .child(Dropdown::new(&self.quality_input).max_w_32()),
                         )
                         .child(
                             v_flex()
+                                .font_bold()
                                 .gap_2()
                                 .child(Text::String("录制格式".into()))
                                 .child(Dropdown::new(&self.format_input).max_w_32()),
                         )
                         .child(
                             v_flex()
+                                .font_bold()
                                 .gap_2()
                                 .child(Text::String("录制编码".into()))
                                 .child(Dropdown::new(&self.codec_input).max_w_32()),
@@ -240,12 +273,6 @@ impl Render for SettingsModal {
                         .label("保存设置")
                         .primary()
                         .on_click(cx.listener(Self::save_settings)),
-                    Button::new("cancel")
-                        .label("取消")
-                        .danger()
-                        .on_click(move |_, window, cx| {
-                            window.close_modal(cx);
-                        }),
                 ]))
     }
 }

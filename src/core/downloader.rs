@@ -18,7 +18,6 @@ use rand::Rng;
 use std::sync::{Mutex, atomic};
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, time::Duration};
 
-#[derive(Clone)]
 pub struct DownloaderContext {
     pub entity: WeakEntity<RoomCard>,
     pub client: HttpClient,
@@ -264,7 +263,26 @@ impl DownloaderContext {
         self.stats
             .lock()
             .map(|guard| guard.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(|_| {
+                eprintln!("无法获取统计信息锁");
+                DownloadStats::default()
+            })
+    }
+}
+
+impl Clone for DownloaderContext {
+    fn clone(&self) -> Self {
+        Self {
+            entity: self.entity.clone(),
+            client: self.client.clone(),
+            room_id: self.room_id,
+            quality: self.quality,
+            format: self.format,
+            codec: self.codec,
+            stats: self.stats.clone(),
+            is_running: self.is_running.clone(),
+            event_queue: Arc::new(Mutex::new(VecDeque::new())),
+        }
     }
 }
 
@@ -1308,6 +1326,8 @@ impl BLiveDownloader {
     pub fn stop(&mut self) {
         // 设置停止状态
         self.context.set_running(false);
+
+        println!("停止下载器");
 
         // 停止下载器
         if let Some(ref mut downloader) = self.downloader {

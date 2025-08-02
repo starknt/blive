@@ -104,10 +104,10 @@ impl Downloader for HttpStreamDownloader {
                     Ok(p) => p,
                     Err(e) => {
                         context.push_event(DownloadEvent::Error {
-                            error: crate::core::downloader::DownloaderError::ffmpeg_startup_failed(
-                                format!("ffmpeg -i {url}"),
-                                format!("{e}"),
-                            ),
+                            error: DownloaderError::FfmpegStartupFailed {
+                                command: format!("ffmpeg -i {url}"),
+                                stderr: e.to_string(),
+                            },
                         });
                         return;
                     }

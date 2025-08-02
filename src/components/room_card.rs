@@ -242,23 +242,26 @@ impl Render for RoomCard {
                             .justify_between()
                             .items_start()
                             .child(
-                                // 左侧：封面和基本信息
                                 h_flex()
                                     .gap_3()
                                     .items_start()
                                     .child(
-                                        // 封面图片
-                                        div().w_32().h_20().rounded_lg().overflow_hidden().child(
-                                            div().rounded_lg().overflow_hidden().size_full().child(
-                                                img(room_info.user_cover.clone())
-                                                    .block()
-                                                    .size_full()
-                                                    .object_fit(ObjectFit::Cover),
-                                            ),
+                                        div().w_40().child(
+                                            div()
+                                                .rounded(cx.theme().radius_lg)
+                                                .overflow_hidden()
+                                                .size_full()
+                                                .child(
+                                                    img(room_info.user_cover.clone())
+                                                        .block()
+                                                        .size_full()
+                                                        .rounded(cx.theme().radius_lg)
+                                                        .overflow_hidden()
+                                                        .object_fit(ObjectFit::Cover),
+                                                ),
                                         ),
                                     )
                                     .child(
-                                        // 房间信息
                                         v_flex()
                                             .gap_1()
                                             .child(
@@ -281,21 +284,15 @@ impl Render for RoomCard {
                                                 .into_element(),
                                             )
                                             .child(
-                                                // 直播状态和在线人数
                                                 h_flex()
                                                     .gap_2()
                                                     .items_center()
-                                                    .child(
-                                                        // 直播状态指示器
-                                                        div().w_2().h_2().rounded_full().bg(
-                                                            match room_info.live_status {
-                                                                LiveStatus::Live => {
-                                                                    gpui::rgb(0xef4444)
-                                                                }
-                                                                _ => gpui::rgb(0x6b7280),
-                                                            },
-                                                        ),
-                                                    )
+                                                    .child(div().w_2().h_2().rounded_full().bg(
+                                                        match room_info.live_status {
+                                                            LiveStatus::Live => gpui::rgb(0xef4444),
+                                                            _ => gpui::rgb(0x6b7280),
+                                                        },
+                                                    ))
                                                     .child(Text::String(
                                                         match room_info.live_status {
                                                             LiveStatus::Live => "直播中".into(),

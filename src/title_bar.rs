@@ -51,18 +51,30 @@ impl Render for AppTitleBar {
         TitleBar::new()
             .child(
                 div()
-                    .font_bold()
                     .flex()
                     .items_center()
-                    .child(self.title.clone() + " - " + "关注早早碎谢谢喵"),
+                    .gap_2()
+                    .child(
+                        div()
+                            .font_bold()
+                            .text_lg()
+                            .text_color(cx.theme().primary)
+                            .child(self.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().accent_foreground)
+                            .child("关注早早碎谢谢喵"),
+                    ),
             )
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .px_2()
-                    .gap_2()
+                    .px_4()
+                    .gap_3()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(self.settings.clone())
                     .child(self.theme_switcher.clone())
@@ -77,6 +89,7 @@ impl Render for AppTitleBar {
                             })
                             .small()
                             .ghost()
+                            .rounded_full()
                             .on_click(cx.listener(Self::change_color_mode)),
                     )
                     .child(
@@ -86,6 +99,7 @@ impl Render for AppTitleBar {
                                     .small()
                                     .ghost()
                                     .compact()
+                                    .rounded_full()
                                     .icon(IconName::Bell),
                             ),
                         ),

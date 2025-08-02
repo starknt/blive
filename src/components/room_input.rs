@@ -1,5 +1,8 @@
-use gpui::{App, Entity, EventEmitter, Subscription, Window, div, prelude::*};
-use gpui_component::input::{InputEvent, InputState, TextInput};
+use gpui::{App, Entity, EventEmitter, Subscription, Window, div, prelude::*, px};
+use gpui_component::{
+    ActiveTheme,
+    input::{InputEvent, InputState, TextInput},
+};
 
 #[derive(Debug, Clone)]
 pub enum RoomInputEvent {
@@ -54,7 +57,14 @@ impl RoomInput {
 impl EventEmitter<RoomInputEvent> for RoomInput {}
 
 impl Render for RoomInput {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex_1().child(TextInput::new(&self.room_input))
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().flex_1().child(
+            div()
+                .rounded_lg()
+                .border(px(1.0))
+                .border_color(cx.theme().border)
+                .bg(cx.theme().background)
+                .child(TextInput::new(&self.room_input).p_3().text_lg()),
+        )
     }
 }

@@ -1,13 +1,20 @@
 use crate::error::{AppError, AppResult};
 use crate::settings::APP_NAME;
+use chrono::Local;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{LazyLock, RwLock};
 use tracing::Level;
-use tracing_subscriber::{
-    FmtSubscriber,
-    fmt::{format::FmtSpan, time::SystemTime},
-};
+use tracing_subscriber::fmt::time::FormatTime;
+use tracing_subscriber::{FmtSubscriber, fmt::format::FmtSpan};
+
+struct SystemTime;
+
+impl FormatTime for SystemTime {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        write!(w, "{}", Local::now().format("%Y-%m-%d %H:%M:%S"))
+    }
+}
 
 /// 默认日志路径，使用LazyLock进行惰性初始化
 static DEFAULT_LOG_PATH: LazyLock<PathBuf> = LazyLock::new(|| {

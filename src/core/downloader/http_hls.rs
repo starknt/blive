@@ -53,8 +53,8 @@ impl HttpHlsDownloader {
             .arg(referer_header)
             .arg("-i")
             .arg(url)
-            .arg("-bsf:a")
-            .arg("aac_adtstoasc") // if using AAC in TS
+            .args(["-vf", "scale=1920:1080"])
+            .args(["-bsf:a", "aac_adtstoasc"])
             .arg("-c:v")
             .arg(match config.codec {
                 StreamCodec::AVC => "copy",

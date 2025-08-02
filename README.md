@@ -1,6 +1,13 @@
-# Bilibili 直播录制器 (LiveRecorder)
+# Bilibili 直播录制器 (BLive)
 
 一个基于 Rust 和 GPUI 开发的跨平台 Bilibili 直播录制工具，提供现代化的图形用户界面和高效的录制功能。
+
+## 📚 文档
+
+- **[用户指南](USER_GUIDE.md)** - 详细的使用说明和功能介绍
+- **[开发者指南](DEVELOPER_GUIDE.md)** - 开发环境设置和贡献指南
+- **[贡献指南](CONTRIBUTING.md)** - 详细的贡献流程和规范
+- **[TODO](TODO.md)** - 项目开发计划和功能状态
 
 ## 🚀 功能特性
 
@@ -8,9 +15,15 @@
 - **跨平台支持**: 支持 Windows、macOS 和 Linux 系统
 - **实时录制**: 支持 Bilibili 直播间的实时录制功能
 - **多房间管理**: 可以同时管理多个直播间的录制任务
+- **智能文件管理**: 自动处理文件冲突，支持分P录制
+- **多种流协议**: 支持 HTTP Stream 和 HTTP HLS 两种直播流协议
+- **高质量录制**: 支持多种画质选择（杜比、4K、原画、蓝光、超清、高清、流畅）
+- **多种格式支持**: 支持 FLV、FMP4、TS 等多种视频容器格式
+- **编码选择**: 支持 AVC 和 HEVC 两种视频编码
+- **自动重连**: 网络异常时自动重连，确保录制连续性
 - **主题切换**: 支持明暗主题切换，提供更好的视觉体验
 - **设置管理**: 灵活的录制设置和房间配置管理
-- **高质量录制**: 支持多种画质选择，确保录制质量
+- **日志系统**: 完整的日志记录和错误追踪
 
 ## 📋 系统要求
 
@@ -18,6 +31,7 @@
 - **内存**: 至少 4GB RAM
 - **存储**: 至少 1GB 可用磁盘空间
 - **网络**: 稳定的互联网连接
+- **FFmpeg**: 程序会自动下载和配置 FFmpeg
 
 ## 🛠️ 安装说明
 
@@ -50,10 +64,13 @@
 项目使用以下主要依赖：
 
 - **GPUI**: 现代化的 GUI 框架
+- **gpui-component**: GPUI 组件库
 - **reqwest**: HTTP 客户端
 - **serde**: 序列化/反序列化
 - **tokio**: 异步运行时
 - **chrono**: 时间处理
+- **ffmpeg-sidecar**: FFmpeg 集成
+- **tracing**: 日志系统
 
 ## 🎯 使用方法
 
@@ -67,8 +84,14 @@
 ### 高级功能
 
 - **设置配置**: 通过设置面板调整录制参数
+  - 录制策略：优化CPU占用、优化硬盘占用、配置优先
+  - 录制质量：杜比、4K、原画、蓝光、超清、高清、流畅
+  - 录制格式：FLV、FMP4、TS
+  - 录制编码：AVC、HEVC
+  - 录制目录：自定义录制文件保存路径
 - **主题切换**: 在界面中切换明暗主题
 - **多房间管理**: 同时添加多个直播间进行录制
+- **文件管理**: 自动处理文件冲突，支持分P录制
 
 ## 🏗️ 项目结构
 
@@ -77,21 +100,27 @@ blive/
 ├── src/
 │   ├── main.rs              # 程序入口
 │   ├── lib.rs               # 主应用逻辑
-│   ├── api/                 # API 接口模块
-│   │   ├── mod.rs           # API 客户端
-│   │   ├── room.rs          # 房间信息 API
-│   │   ├── stream.rs        # 流媒体 API
-│   │   └── user.rs          # 用户信息 API
+│   ├── app.rs               # 应用主界面
+│   ├── state.rs             # 应用状态管理
+│   ├── settings.rs          # 设置管理
+│   ├── themes.rs            # 主题管理
+│   ├── logger.rs            # 日志系统
+│   ├── title_bar.rs         # 标题栏
+│   ├── core/                # 核心功能模块
+│   │   ├── http_client.rs   # HTTP 客户端
+│   │   ├── downloader.rs    # 下载器核心逻辑
+│   │   ├── http_client/     # HTTP 客户端实现
+│   │   └── downloader/      # 下载器实现
+│   │       ├── http_stream.rs # HTTP Stream 下载器
+│   │       └── http_hls.rs    # HTTP HLS 下载器
 │   ├── components/          # UI 组件
 │   │   ├── mod.rs           # 组件模块
 │   │   ├── room_card.rs     # 房间卡片组件
-│   │   └── settings_modal.rs # 设置模态框
-│   ├── settings.rs          # 设置管理
-│   ├── state.rs             # 应用状态
-│   ├── themes.rs            # 主题管理
-│   └── title_bar.rs         # 标题栏
+│   │   ├── room_input.rs    # 房间输入组件
+│   │   ├── settings_modal.rs # 设置模态框
+│   │   └── app_settings.rs  # 应用设置组件
+│   └── error.rs             # 错误处理
 ├── assets/                  # 静态资源
-│   └── icons/               # 图标文件
 ├── resources/               # 资源文件
 ├── themes/                  # 主题文件
 ├── script/                  # 构建脚本
@@ -160,6 +189,11 @@ blive/
 - 基础录制功能
 - 现代化 GUI 界面
 - 跨平台支持
+- 支持 HTTP Stream 和 HTTP HLS 协议
+- 多种画质和格式支持
+- 自动重连功能
+- 智能文件管理
+- 完整的设置系统
 
 ## 🙏 致谢
 
@@ -169,6 +203,7 @@ blive/
 - [gpui-component](https://github.com/longbridge/gpui-component) - GPUI 组件库
 - [reqwest](https://github.com/seanmonstar/reqwest) - HTTP 客户端
 - [serde](https://github.com/serde-rs/serde) - 序列化框架
+- [ffmpeg-sidecar](https://github.com/nathanbabcock/ffmpeg-sidecar) - FFmpeg 集成
 
 ## 🌟 项目统计
 

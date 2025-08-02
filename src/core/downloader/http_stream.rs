@@ -22,12 +22,7 @@ pub struct HttpStreamDownloader {
 }
 
 impl HttpStreamDownloader {
-    pub fn new(
-        url: String,
-        config: DownloadConfig,
-        _client: crate::core::http_client::HttpClient, // 保留参数以兼容接口，但不使用
-        context: DownloaderContext,
-    ) -> Self {
+    pub fn new(url: String, config: DownloadConfig, context: DownloaderContext) -> Self {
         Self {
             url,
             config,
@@ -57,16 +52,10 @@ impl HttpStreamDownloader {
             .arg(user_agent_header)
             .arg("-headers")
             .arg(referer_header)
-            .arg("-reconnect")
-            .arg("1")
-            .arg("-reconnect_streamed")
-            .arg("1")
-            .arg("-reconnect_delay_max")
-            .arg("30")
             .arg("-i")
             .arg(url)
-            .arg("-c")
-            .arg("copy")
+            .arg("-bsf:a")
+            .arg("aac_adtstoasc")
             .arg("-c:v")
             .arg(match config.codec {
                 StreamCodec::AVC => "copy",
@@ -118,7 +107,7 @@ impl Downloader for HttpStreamDownloader {
                         context.push_event(DownloadEvent::Error {
                             error: crate::core::downloader::DownloaderError::ffmpeg_startup_failed(
                                 format!("ffmpeg -i {url}"),
-                                format!("{e}")
+                                format!("{e}"),
                             ),
                         });
                         return;
@@ -150,7 +139,6 @@ impl Downloader for HttpStreamDownloader {
                                     });
                                 }
                                 FfmpegEvent::Done => {
-                                    // 获取文件大小
                                     let file_size = std::fs::metadata(&output_path)
                                         .map(|m| m.len())
                                         .unwrap_or(bytes_downloaded);
@@ -161,7 +149,6 @@ impl Downloader for HttpStreamDownloader {
                                     });
                                 }
                                 FfmpegEvent::LogEOF => {
-                                    // 流结束，获取文件大小
                                     let file_size = std::fs::metadata(&output_path)
                                         .map(|m| m.len())
                                         .unwrap_or(bytes_downloaded);
@@ -175,7 +162,7 @@ impl Downloader for HttpStreamDownloader {
                                     match level {
                                         ffmpeg_sidecar::event::LogLevel::Fatal => {
                                             context.push_event(DownloadEvent::Error {
-                                                error: crate::core::downloader::DownloaderError::FfmpegRuntimeError {
+                                                error: DownloaderError::FfmpegRuntimeError {
                                                     error_type: "Fatal".to_string(),
                                                     message: msg,
                                                 },
@@ -183,24 +170,29 @@ impl Downloader for HttpStreamDownloader {
                                         }
                                         ffmpeg_sidecar::event::LogLevel::Error => {
                                             // 根据错误消息智能分类
-                                            if msg.contains("Connection reset") ||
-                                               msg.contains("timeout") ||
-                                               msg.contains("No route to host") ||
-                                               msg.contains("Connection refused") {
+                                            if msg.contains("Connection reset")
+                                                || msg.contains("timeout")
+                                                || msg.contains("No route to host")
+                                                || msg.contains("Connection refused")
+                                            {
                                                 context.push_event(DownloadEvent::Error {
-                                                    error: crate::core::downloader::DownloaderError::network_connection_failed(
-                                                        msg, 0
-                                                    ),
+                                                    error:
+                                                        DownloaderError::network_connection_failed(
+                                                            msg, 0,
+                                                        ),
                                                 });
-                                            } else if msg.contains("Protocol not found") ||
-                                                     msg.contains("Invalid data found") {
+                                            } else if msg.contains("Protocol not found")
+                                                || msg.contains("Invalid data found")
+                                                || msg.contains("Decoder failed")
+                                            {
                                                 context.push_event(DownloadEvent::Error {
-                                                    error: crate::core::downloader::DownloaderError::StreamEncodingError {
+                                                    error: DownloaderError::StreamEncodingError {
                                                         codec: "unknown".to_string(),
                                                         details: msg,
                                                     },
                                                 });
                                             } else {
+                                                #[cfg(debug_assertions)]
                                                 context.push_event(DownloadEvent::Error {
                                                     error: DownloaderError::FfmpegRuntimeError {
                                                         error_type: "Error".to_string(),
@@ -209,11 +201,7 @@ impl Downloader for HttpStreamDownloader {
                                                 });
                                             }
                                         }
-                                        _ => {
-                                            // 其他日志级别暂时忽略
-                                            #[cfg(debug_assertions)]
-                                            eprintln!("FFmpeg {level:?}: {msg}");
-                                        }
+                                        _ => {}
                                     }
                                 }
                                 _ => {}

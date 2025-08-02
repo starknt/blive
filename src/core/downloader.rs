@@ -215,7 +215,7 @@ impl DownloaderContext {
 
         cx.spawn(async move |cx| {
             while context.is_running() {
-                // 每100ms处理一次事件队列
+                // 每 1s 处理一次事件队列
                 cx.background_executor()
                     .timer(Duration::from_millis(1000))
                     .await;
@@ -947,12 +947,7 @@ impl BLiveDownloader {
             format: self.context.format,
             quality: self.context.quality,
         };
-        let http_downloader = HttpStreamDownloader::new(
-            url.clone(),
-            config,
-            self.context.client.clone(),
-            self.context.clone(),
-        );
+        let http_downloader = HttpStreamDownloader::new(url.clone(), config, self.context.clone());
 
         Ok((url, DownloaderType::HttpStream(http_downloader)))
     }
@@ -1155,12 +1150,7 @@ impl BLiveDownloader {
                     format: self.context.format,
                     quality: self.context.quality,
                 };
-                let downloader = HttpStreamDownloader::new(
-                    url,
-                    config,
-                    self.context.client.clone(),
-                    self.context.clone(),
-                );
+                let downloader = HttpStreamDownloader::new(url, config, self.context.clone());
 
                 DownloaderType::HttpStream(downloader)
             }
@@ -1278,7 +1268,6 @@ impl BLiveDownloader {
                         delay_secs: delay.as_secs(),
                     });
 
-                    // 等待一段时间后重试 - 使用异步定时器
                     cx.background_executor().timer(delay).await;
                     continue;
                 }

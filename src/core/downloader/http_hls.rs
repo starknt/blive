@@ -53,8 +53,6 @@ impl HttpHlsDownloader {
             .arg(referer_header)
             .arg("-i")
             .arg(url)
-            .arg("-c")
-            .arg("copy")
             .arg("-bsf:a")
             .arg("aac_adtstoasc") // if using AAC in TS
             .arg("-c:v")
@@ -139,7 +137,7 @@ impl Downloader for HttpHlsDownloader {
                                     match level {
                                         ffmpeg_sidecar::event::LogLevel::Fatal => {
                                             context.push_event(DownloadEvent::Error {
-                                                error: crate::core::downloader::DownloaderError::FfmpegRuntimeError {
+                                                error: DownloaderError::FfmpegRuntimeError {
                                                     error_type: "Fatal".to_string(),
                                                     message: msg,
                                                 },
@@ -147,24 +145,29 @@ impl Downloader for HttpHlsDownloader {
                                         }
                                         ffmpeg_sidecar::event::LogLevel::Error => {
                                             // 根据错误消息智能分类
-                                            if msg.contains("Connection reset") ||
-                                               msg.contains("timeout") ||
-                                               msg.contains("No route to host") ||
-                                               msg.contains("Connection refused") {
+                                            if msg.contains("Connection reset")
+                                                || msg.contains("timeout")
+                                                || msg.contains("No route to host")
+                                                || msg.contains("Connection refused")
+                                            {
                                                 context.push_event(DownloadEvent::Error {
-                                                    error: crate::core::downloader::DownloaderError::network_connection_failed(
-                                                        msg, 0
-                                                    ),
+                                                    error:
+                                                        DownloaderError::network_connection_failed(
+                                                            msg, 0,
+                                                        ),
                                                 });
-                                            } else if msg.contains("Protocol not found") ||
-                                                     msg.contains("Invalid data found") {
+                                            } else if msg.contains("Protocol not found")
+                                                || msg.contains("Invalid data found")
+                                                || msg.contains("Decoder failed")
+                                            {
                                                 context.push_event(DownloadEvent::Error {
-                                                    error: crate::core::downloader::DownloaderError::StreamEncodingError {
+                                                    error: DownloaderError::StreamEncodingError {
                                                         codec: "unknown".to_string(),
                                                         details: msg,
                                                     },
                                                 });
                                             } else {
+                                                #[cfg(debug_assertions)]
                                                 context.push_event(DownloadEvent::Error {
                                                     error: DownloaderError::FfmpegRuntimeError {
                                                         error_type: "Error".to_string(),
@@ -173,9 +176,11 @@ impl Downloader for HttpHlsDownloader {
                                                 });
                                             }
                                         }
-                                        _ => {                                        }
+                                        _ => {
+                                            // 其他日志级别暂时忽略
+                                        }
                                     }
-                                },
+                                }
                                 _ => {}
                             }
                         }

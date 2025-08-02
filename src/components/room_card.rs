@@ -1,7 +1,7 @@
 use crate::{
     core::{
         HttpClient,
-        downloader::BLiveDownloader,
+        downloader::{BLiveDownloader, utils::pretty_bytes},
         http_client::{
             room::{LiveRoomInfoData, LiveStatus},
             user::LiveUserInfo,
@@ -41,7 +41,9 @@ impl std::fmt::Display for RoomCardStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RoomCardStatus::Waiting => write!(f, "等待中"),
-            RoomCardStatus::Recording(speed) => write!(f, "录制中: {speed} kb/s"),
+            RoomCardStatus::Recording(speed) => {
+                write!(f, "录制中: {}/s", pretty_bytes((speed * 1024.0) as u64))
+            }
             RoomCardStatus::Error(err) => write!(f, "错误: {err}"),
         }
     }
@@ -190,7 +192,6 @@ impl RoomCard {
         let record_dir = global_setting.record_dir;
 
         cx.spawn(async move |cx| {
-            // 创建下载器 - 现在只需要传递WeakEntity给构造函数
             let mut downloader = BLiveDownloader::new(
                 room_info.room_id,
                 global_setting.quality,

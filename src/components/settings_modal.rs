@@ -28,6 +28,7 @@ pub struct SettingsModal {
 #[derive(Debug, Clone)]
 pub enum SettingsModalEvent {
     SaveSettings(GlobalSettings),
+    QuitSettings,
 }
 
 impl EventEmitter<SettingsModalEvent> for SettingsModal {}
@@ -196,6 +197,10 @@ impl SettingsModal {
         window.push_notification(Notification::success("设置保存成功"), cx);
     }
 
+    pub fn quit_settings(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(SettingsModalEvent::QuitSettings);
+    }
+
     fn open_dir(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             if let Some(handle) = rfd::AsyncFileDialog::new().pick_folder().await {
@@ -273,6 +278,10 @@ impl Render for SettingsModal {
                         .label("保存设置")
                         .primary()
                         .on_click(cx.listener(Self::save_settings)),
+                    Button::new("quit")
+                        .label("退出设置")
+                        .warning()
+                        .on_click(cx.listener(Self::quit_settings)),
                 ]))
     }
 }

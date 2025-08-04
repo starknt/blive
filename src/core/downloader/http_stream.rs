@@ -104,7 +104,7 @@ impl Downloader for HttpStreamDownloader {
                     Ok(p) => p,
                     Err(e) => {
                         context.push_event(DownloadEvent::Error {
-                            error: DownloaderError::FfmpegStartupFailed {
+                            error: DownloaderError::StartupFailed {
                                 command: format!("ffmpeg -i {url}"),
                                 stderr: e.to_string(),
                             },

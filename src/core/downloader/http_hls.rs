@@ -205,7 +205,7 @@ impl Downloader for HttpHlsDownloader {
                     }
                     Err(e) => {
                         context.push_event(DownloadEvent::Error {
-                            error: DownloaderError::FfmpegStartupFailed {
+                            error: DownloaderError::StartupFailed {
                                 command: "".to_string(),
                                 stderr: e.to_string(),
                             },

@@ -22,7 +22,7 @@ use gpui_component::{
     text::Text,
     v_flex,
 };
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 #[derive(Clone, Debug)]
 enum RoomCardEvent {
@@ -55,13 +55,18 @@ pub struct RoomCard {
     pub(crate) user_info: LiveUserInfo,
     pub(crate) settings: RoomSettings,
     _subscriptions: Vec<Subscription>,
-    downloader: Option<BLiveDownloader>,
+    pub downloader: Option<Arc<BLiveDownloader>>,
 }
 
 impl RoomCard {
-    fn new(room: LiveRoomInfoData, user: LiveUserInfo, settings: RoomSettings) -> Self {
+    fn new(
+        room: LiveRoomInfoData,
+        user: LiveUserInfo,
+        settings: RoomSettings,
+        subscription: Subscription,
+    ) -> Self {
         Self {
-            _subscriptions: vec![],
+            _subscriptions: vec![subscription],
             status: match room.live_status {
                 LiveStatus::Live => RoomCardStatus::Recording(0.0),
                 _ => RoomCardStatus::Waiting,
@@ -105,13 +110,23 @@ impl RoomCard {
             })
             .detach();
 
-            Self::new(room, user, settings)
+            let subscription = cx.on_app_quit(|card, _cx| {
+                let downloader = card.downloader.take();
+
+                async move {
+                    if let Some(downloader) = downloader {
+                        downloader.stop().await;
+                    }
+                }
+            });
+
+            Self::new(room, user, settings, subscription)
         });
 
-        let subscriptions = vec![cx.subscribe(&card, Self::on_event)];
+        let subscription = cx.subscribe(&card, Self::on_event);
 
         card.update(cx, |card, cx| {
-            card._subscriptions = subscriptions;
+            card._subscriptions.push(subscription);
 
             if live_status == LiveStatus::Live {
                 cx.emit(RoomCardEvent::StatusChanged(RoomCardStatus::Recording(0.0)));
@@ -138,13 +153,16 @@ impl RoomCard {
                         Self::do_record(this, cx);
                     }
                     RoomCardStatus::Waiting => {
-                        // 停止录制
                         this.update(cx, |this, cx| {
                             this.status = RoomCardStatus::Waiting;
-                            // 停止下载器
-                            if let Some(ref mut downloader) = this.downloader {
-                                downloader.stop();
-                            }
+                            let downloader = this.downloader.take();
+                            cx.foreground_executor()
+                                .spawn(async move {
+                                    if let Some(downloader) = downloader {
+                                        downloader.stop().await;
+                                    }
+                                })
+                                .detach();
                             cx.notify();
                         });
                     }
@@ -191,15 +209,21 @@ impl RoomCard {
         let global_setting = AppState::global(cx).settings.clone();
         let record_dir = global_setting.record_dir;
 
+        let downloader = Arc::new(BLiveDownloader::new(
+            room_info.room_id,
+            global_setting.quality,
+            global_setting.format,
+            global_setting.codec,
+            client,
+            task_card.clone(),
+        ));
+
+        this.update(cx, |this, _| {
+            this.downloader = Some(downloader.clone());
+        });
+
         cx.spawn(async move |cx| {
-            let mut downloader = BLiveDownloader::new(
-                room_info.room_id,
-                global_setting.quality,
-                global_setting.format,
-                global_setting.codec,
-                client,
-                task_card.clone(),
-            );
+            let downloader = downloader.clone();
 
             // 开始下载
             match downloader
@@ -368,7 +392,10 @@ impl Render for RoomCard {
                                                                 RoomCardStatus::Waiting
                                                             }
                                                         };
-                                                        card.status = new_status;
+                                                        card.status = new_status.clone();
+                                                        cx.emit(RoomCardEvent::StatusChanged(
+                                                            new_status,
+                                                        ));
                                                         cx.notify();
                                                     })),
                                             ])

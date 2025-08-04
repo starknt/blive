@@ -45,10 +45,10 @@ fn main() {
                 state.settings.save();
             });
 
-            // 记录应用关闭日志 - 使用全局日志函数
-            log_app_shutdown();
-
-            async {}
+            async move {
+                // 记录应用关闭日志
+                log_app_shutdown();
+            }
         })
         .detach();
 

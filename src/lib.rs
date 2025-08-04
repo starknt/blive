@@ -1,4 +1,5 @@
 #![allow(clippy::collapsible_if)]
+#![allow(clippy::await_holding_lock)]
 
 pub mod app;
 pub mod assets;

@@ -11,6 +11,7 @@ use crate::{
     core::{
         HttpClient,
         downloader::{DownloadEvent, DownloadStats, utils},
+        http_client::{room::LiveRoomInfoData, user::LiveUserInfo},
     },
     log_recording_error, log_recording_start, log_recording_stop,
     settings::{Quality, StreamCodec, VideoContainer},
@@ -52,7 +53,8 @@ impl Default for DownloadConfig {
 pub struct DownloaderContext {
     pub entity: WeakEntity<RoomCard>,
     pub client: HttpClient,
-    pub room_id: u64,
+    pub room_info: LiveRoomInfoData,
+    pub user_info: LiveUserInfo,
     pub quality: Quality,
     pub format: VideoContainer,
     pub codec: StreamCodec,
@@ -65,7 +67,8 @@ impl DownloaderContext {
     pub fn new(
         entity: WeakEntity<RoomCard>,
         client: HttpClient,
-        room_id: u64,
+        room_info: LiveRoomInfoData,
+        user_info: LiveUserInfo,
         quality: Quality,
         format: VideoContainer,
         codec: StreamCodec,
@@ -73,7 +76,8 @@ impl DownloaderContext {
         Self {
             entity,
             client,
-            room_id,
+            room_info,
+            user_info,
             quality,
             format,
             codec,
@@ -191,7 +195,7 @@ impl DownloaderContext {
         match event {
             DownloadEvent::Started { file_path } => {
                 log_recording_start(
-                    self.room_id,
+                    self.room_info.room_id,
                     &self.quality.to_string(),
                     &format!("文件: {file_path}"),
                 );
@@ -205,7 +209,7 @@ impl DownloaderContext {
                 #[cfg(debug_assertions)]
                 tracing::debug!(
                     "录制进度 - 房间: {}, 已下载: {:.2}MB, 速度: {:.1}kb/s, 时长: {}秒",
-                    self.room_id,
+                    self.room_info.room_id,
                     utils::pretty_bytes(*bytes_downloaded),
                     *download_speed_kbps,
                     duration_ms / 1000
@@ -213,9 +217,12 @@ impl DownloaderContext {
             }
             DownloadEvent::Error { error } => {
                 if error.is_recoverable() {
-                    log_recording_error(self.room_id, &format!("网络异常，正在重连: {error}"));
+                    log_recording_error(
+                        self.room_info.room_id,
+                        &format!("网络异常，正在重连: {error}"),
+                    );
                 } else {
-                    log_recording_error(self.room_id, &format!("录制失败: {error}"));
+                    log_recording_error(self.room_info.room_id, &format!("录制失败: {error}"));
                 }
             }
             DownloadEvent::Reconnecting {
@@ -223,7 +230,7 @@ impl DownloaderContext {
                 delay_secs,
             } => {
                 log_recording_error(
-                    self.room_id,
+                    self.room_info.room_id,
                     &format!("网络中断，第{attempt}次重连 ({delay_secs}秒后)"),
                 );
             }
@@ -232,10 +239,10 @@ impl DownloaderContext {
                 file_size,
             } => {
                 let mb_size = *file_size as f64 / 1024.0 / 1024.0;
-                log_recording_stop(self.room_id);
+                log_recording_stop(self.room_info.room_id);
                 tracing::info!(
                     "录制完成 - 房间: {}, 文件: {}, 大小: {:.2}MB",
-                    self.room_id,
+                    self.room_info.room_id,
                     file_path,
                     mb_size
                 );

@@ -210,7 +210,8 @@ impl RoomCard {
         let record_dir = global_setting.record_dir;
 
         let downloader = Arc::new(BLiveDownloader::new(
-            room_info.room_id,
+            room_info,
+            user_info,
             global_setting.quality,
             global_setting.format,
             global_setting.codec,
@@ -226,10 +227,7 @@ impl RoomCard {
             let downloader = downloader.clone();
 
             // 开始下载
-            match downloader
-                .start_download_with_retry(cx, &room_info, &user_info, &record_dir)
-                .await
-            {
+            match downloader.start(cx, &record_dir).await {
                 Ok(_) => {
                     // 下载成功完成，状态会通过事件回调自动更新
                 }

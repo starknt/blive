@@ -2,10 +2,9 @@ pub mod context;
 pub mod error;
 pub mod http_hls;
 pub mod http_stream;
+pub mod stats;
 pub mod template;
 pub mod utils;
-
-pub use context::{DownloadConfig, DownloaderContext};
 
 use crate::components::{RoomCard, RoomCardStatus};
 use crate::core::downloader::error::DownloaderError;
@@ -19,13 +18,15 @@ use crate::settings::{DEFAULT_RECORD_NAME, LiveProtocol, Quality, StreamCodec, V
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
+pub use context::{DownloadConfig, DownloaderContext};
 use gpui::{AsyncApp, WeakEntity};
 use rand::Rng;
+pub use stats::DownloadStats;
 use std::sync::Mutex;
 use std::time::Duration;
 
-pub static REFERER: &str = "https://live.bilibili.com/";
-pub static USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+pub const REFERER: &str = "https://live.bilibili.com/";
+pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 #[derive(Debug, Clone)]
 pub enum DownloadEvent {
@@ -45,16 +46,6 @@ pub enum DownloadEvent {
     Reconnecting { attempt: u32, delay_secs: u64 },
 }
 
-// 下载统计信息
-#[derive(Debug, Clone, Default)]
-pub struct DownloadStats {
-    pub bytes_downloaded: u64,
-    pub download_speed_kbps: f32,
-    pub duration_ms: u64,
-    pub reconnect_count: u32,
-    pub last_error: Option<String>,
-}
-
 pub trait Downloader {
     /// 开始下载
     fn start(&mut self, cx: &mut AsyncApp) -> Result<()>;
@@ -64,9 +55,6 @@ pub trait Downloader {
 
     /// 获取下载状态
     fn status(&self) -> DownloadStatus;
-
-    /// 获取下载统计信息
-    fn stats(&self) -> DownloadStats;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,8 +86,303 @@ pub struct BLiveDownloader {
 }
 
 impl BLiveDownloader {
+    async fn start_download(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
+        // 获取流信息
+        let stream_info = self.get_stream_info().await?;
+
+        // 解析下载URL和选择下载器类型
+        let (url, downloader_type) = self.parse_stream_url(&stream_info)?;
+
+        // 生成文件名
+        let filename = self.generate_filename()?;
+
+        // 获取文件扩展名
+        let ext = self.context.format.ext();
+
+        // 处理文件路径冲突
+        let file_path = self.resolve_file_path(record_dir, &filename, ext)?;
+
+        // 根据下载器类型创建具体的下载器
+        let mut final_downloader = match downloader_type {
+            DownloaderType::HttpStream(_) => {
+                let config = DownloadConfig {
+                    output_path: file_path.clone(),
+                    overwrite: false,
+                    timeout: 30,
+                    retry_count: 3,
+                    codec: self.context.codec,
+                    format: self.context.format,
+                    quality: self.context.quality,
+                };
+                let downloader = HttpStreamDownloader::new(url, config, self.context.clone());
+
+                DownloaderType::HttpStream(downloader)
+            }
+            DownloaderType::HttpHls(_) => {
+                let config = DownloadConfig {
+                    output_path: file_path.clone(),
+                    overwrite: false,
+                    timeout: 30,
+                    retry_count: 3,
+                    codec: self.context.codec,
+                    format: self.context.format,
+                    quality: self.context.quality,
+                };
+                let downloader = HttpHlsDownloader::new(url, config, self.context.clone());
+
+                DownloaderType::HttpHls(downloader)
+            }
+        };
+
+        match &mut final_downloader {
+            DownloaderType::HttpStream(downloader) => match downloader.start(cx) {
+                Ok(_) => {
+                    // 设置运行状态
+                    self.context.set_running(true);
+
+                    // 启动事件处理器
+                    self.context.start_event_processor(cx);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            },
+            DownloaderType::HttpHls(downloader) => match downloader.start(cx) {
+                Ok(_) => {
+                    // 设置运行状态
+                    self.context.set_running(true);
+
+                    // 启动事件处理器
+                    self.context.start_event_processor(cx);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            },
+        }
+
+        self.downloader.lock().unwrap().replace(final_downloader);
+
+        Ok(())
+    }
+
+    /// 带重连的下载方法
+    pub async fn start(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
+        let mut retry_count = 0;
+
+        loop {
+            match self.start_download(cx, record_dir).await {
+                Ok(_) => {
+                    // 下载成功启动，重置重连计数
+                    self.context.update_stats(|stats| {
+                        stats.reconnect_count = 0;
+                    });
+
+                    // 更新UI状态为录制中
+                    self.update_card_status(cx, RoomCardStatus::Recording(0.0));
+
+                    // 下载成功启动，现在监控下载状态
+                    if self.is_auto_reconnect() {
+                        // 启动状态监控，处理自动重连和状态管理
+                        self.monitor_download_status(cx, record_dir).await?;
+                    }
+                    return Ok(());
+                }
+                Err(e) if Self::is_network_error(&e) => {
+                    retry_count += 1;
+                    self.context.update_stats(|stats| {
+                        stats.reconnect_count = retry_count;
+                    });
+
+                    let delay = self.calculate_backoff_delay(retry_count);
+
+                    eprintln!("网络异常，正在尝试重连 (第{retry_count}次，等待{delay:?}): {e}");
+
+                    // 更新UI状态显示重连信息
+                    self.update_card_status(
+                        cx,
+                        RoomCardStatus::Error(format!(
+                            "网络中断，第{retry_count}次重连 ({delay_secs}秒后)",
+                            delay_secs = delay.as_secs()
+                        )),
+                    );
+
+                    // 发送重连事件
+                    self.context.push_event(DownloadEvent::Reconnecting {
+                        attempt: retry_count,
+                        delay_secs: delay.as_secs(),
+                    });
+
+                    cx.background_executor().timer(delay).await;
+                    continue;
+                }
+                Err(e) => {
+                    // 非网络错误，直接返回
+                    eprintln!("非网络错误，停止重连: {e}");
+
+                    // 更新UI状态显示错误
+                    self.update_card_status(cx, RoomCardStatus::Error(format!("录制失败: {e}")));
+
+                    // 发送错误事件
+                    self.context.push_event(DownloadEvent::Error {
+                        error: DownloaderError::InvalidRecordingConfig {
+                            field: "stream_url".to_string(),
+                            value: "unavailable".to_string(),
+                            reason: format!("非网络错误: {e}"),
+                        },
+                    });
+
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    pub async fn stop(&self) {
+        // 设置停止状态
+        self.context.set_running(false);
+
+        {
+            let mut downloader_guard = self.downloader.lock().unwrap();
+            if let Some(ref mut downloader) = downloader_guard.as_mut() {
+                match downloader {
+                    DownloaderType::HttpStream(downloader) => {
+                        let _ = downloader.stop().await;
+                    }
+                    DownloaderType::HttpHls(downloader) => {
+                        let _ = downloader.stop().await;
+                    }
+                }
+            }
+        }
+    }
+
+    /// 监控下载状态，根据事件处理重连或停止
+    pub async fn monitor_download_status(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
+        let mut consecutive_errors = 0;
+        const MAX_CONSECUTIVE_ERRORS: u32 = 5;
+
+        while self.context.is_running() {
+            // 检查下载器状态
+            let status = {
+                if let Ok(downloader_guard) = self.downloader.lock() {
+                    if let Some(ref downloader) = downloader_guard.as_ref() {
+                        match downloader {
+                            DownloaderType::HttpStream(downloader) => downloader.status(),
+                            DownloaderType::HttpHls(downloader) => downloader.status(),
+                        }
+                    } else {
+                        DownloadStatus::NotStarted
+                    }
+                } else {
+                    DownloadStatus::Error("无法获取下载器锁".to_string())
+                }
+            };
+
+            match status {
+                DownloadStatus::Error(error) => {
+                    consecutive_errors += 1;
+
+                    // 判断是否为网络错误
+                    let is_network_error = Self::is_network_error(&anyhow::anyhow!("{}", error));
+
+                    if is_network_error
+                        && consecutive_errors <= MAX_CONSECUTIVE_ERRORS
+                        && self.is_auto_reconnect()
+                    {
+                        // 发送错误事件（可恢复）
+                        self.context.push_event(DownloadEvent::Error {
+                            error: DownloaderError::NetworkError(error.clone()),
+                        });
+
+                        // 停止当前下载器
+                        self.stop().await;
+
+                        // 计算退避延迟
+                        let delay = self.calculate_backoff_delay(consecutive_errors);
+
+                        // 发送重连事件
+                        self.context.push_event(DownloadEvent::Reconnecting {
+                            attempt: consecutive_errors,
+                            delay_secs: delay.as_secs(),
+                        });
+
+                        // 等待后重新启动下载
+                        cx.background_executor().timer(delay).await;
+
+                        match self.start_download(cx, record_dir).await {
+                            Ok(_) => {
+                                consecutive_errors = 0; // 重置错误计数
+                                eprintln!("✅ 重连成功");
+                            }
+                            Err(e) => {
+                                eprintln!("❌ 重连失败: {e}");
+                            }
+                        }
+                    } else {
+                        // 不可恢复错误或超过最大重试次数
+                        self.context.push_event(DownloadEvent::Error {
+                            error: DownloaderError::NetworkError(format!(
+                                "连续错误超过{MAX_CONSECUTIVE_ERRORS}次，停止重连: {error}"
+                            )),
+                        });
+
+                        self.stop().await;
+                        break;
+                    }
+                }
+                DownloadStatus::Completed => {
+                    // 下载完成
+                    if let Some(stats) = self.get_download_stats() {
+                        self.context.push_event(DownloadEvent::Completed {
+                            file_path: "".to_string(), // 具体路径由下载器提供
+                            file_size: stats.bytes_downloaded,
+                        });
+                    }
+                    break;
+                }
+                DownloadStatus::Downloading => {
+                    consecutive_errors = 0; // 重置错误计数
+
+                    // 更新进度
+                    if let Some(stats) = self.get_download_stats() {
+                        self.context.push_event(DownloadEvent::Progress {
+                            bytes_downloaded: stats.bytes_downloaded,
+                            download_speed_kbps: stats.download_speed_kbps,
+                            duration_ms: stats.duration_ms,
+                        });
+                    }
+                }
+                DownloadStatus::Reconnecting => {
+                    // 下载器内部正在重连，保持等待
+                }
+                DownloadStatus::NotStarted => {
+                    // 下载器未启动，可能需要重新启动
+                    eprintln!("⚠️  下载器未启动，尝试重新启动");
+                    match self.start_download(cx, record_dir).await {
+                        Ok(_) => {
+                            eprintln!("✅ 重新启动成功");
+                        }
+                        Err(e) => {
+                            eprintln!("❌ 重新启动失败: {e}");
+                            consecutive_errors += 1;
+                        }
+                    }
+                }
+            }
+
+            // 等待一段时间后再次检查
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+        }
+
+        Ok(())
+    }
+}
+
+impl BLiveDownloader {
     pub fn new(
-        room_id: u64,
+        room_info: LiveRoomInfoData,
+        user_info: LiveUserInfo,
         quality: Quality,
         format: VideoContainer,
         codec: StreamCodec,
@@ -107,8 +390,7 @@ impl BLiveDownloader {
         entity: WeakEntity<RoomCard>,
     ) -> Self {
         let context: DownloaderContext =
-            DownloaderContext::new(entity, client, room_id, quality, format, codec);
-
+            DownloaderContext::new(entity, client, room_info, user_info, quality, format, codec);
         Self {
             context,
             downloader: Mutex::new(None),
@@ -120,6 +402,36 @@ impl BLiveDownloader {
 
     fn update_card_status(&self, cx: &mut AsyncApp, status: RoomCardStatus) {
         self.context.update_card_status(cx, status);
+    }
+
+    fn is_auto_reconnect(&self) -> bool {
+        *self.is_auto_reconnect.lock().unwrap()
+    }
+
+    /// 检查是否为网络相关错误
+    fn is_network_error(error: &anyhow::Error) -> bool {
+        let error_str = error.to_string().to_lowercase();
+
+        // 检查常见的网络错误关键词
+        error_str.contains("network")
+            || error_str.contains("connection")
+            || error_str.contains("timeout")
+            || error_str.contains("dns")
+            || error_str.contains("socket")
+            || error_str.contains("unreachable")
+            || error_str.contains("reset")
+            || error_str.contains("refused")
+            || error_str.contains("无法连接")
+            || error_str.contains("连接被重置")
+            || error_str.contains("连接超时")
+            || error_str.contains("网络")
+            || error_str.contains("请求失败")
+            || error_str.contains("无法读取响应体")
+    }
+
+    /// 获取下载统计信息
+    fn get_download_stats(&self) -> Option<DownloadStats> {
+        Some(self.context.get_stats())
     }
 
     /// 设置重连参数
@@ -163,7 +475,10 @@ impl BLiveDownloader {
             match self
                 .context
                 .client
-                .get_live_room_stream_url(self.context.room_id, self.context.quality.to_quality())
+                .get_live_room_stream_url(
+                    self.context.room_info.room_id,
+                    self.context.quality.to_quality(),
+                )
                 .await
             {
                 Ok(stream_info) => return Ok(stream_info),
@@ -299,11 +614,10 @@ impl BLiveDownloader {
         Ok((url, DownloaderType::HttpHls(hls_downloader)))
     }
 
-    fn generate_filename(
-        &self,
-        room_info: &LiveRoomInfoData,
-        user_info: &LiveUserInfo,
-    ) -> Result<String> {
+    fn generate_filename(&self) -> Result<String> {
+        let room_info = &self.context.room_info;
+        let user_info = &self.context.user_info;
+
         let template = leon::Template::parse(DEFAULT_RECORD_NAME)
             .unwrap_or_else(|_| leon::Template::parse("{up_name}_{datetime}").unwrap());
 
@@ -420,358 +734,5 @@ impl BLiveDownloader {
         } else {
             Ok(initial_file_path)
         }
-    }
-
-    pub async fn start_download(
-        &self,
-        cx: &mut AsyncApp,
-        room_info: &LiveRoomInfoData,
-        user_info: &LiveUserInfo,
-        record_dir: &str,
-    ) -> Result<()> {
-        // 设置运行状态
-        self.context.set_running(true);
-
-        // 启动事件处理器
-        self.context.start_event_processor(cx);
-
-        // 获取流信息
-        let stream_info = self.get_stream_info().await?;
-
-        // 解析下载URL和选择下载器类型
-        let (url, downloader_type) = self.parse_stream_url(&stream_info)?;
-
-        // 生成文件名
-        let filename = self.generate_filename(room_info, user_info)?;
-
-        // 获取文件扩展名
-        let ext = self.context.format.ext();
-
-        // 处理文件路径冲突
-        let file_path = self.resolve_file_path(record_dir, &filename, ext)?;
-
-        // 根据下载器类型创建具体的下载器
-        let mut final_downloader = match downloader_type {
-            DownloaderType::HttpStream(_) => {
-                let config = DownloadConfig {
-                    output_path: file_path.clone(),
-                    overwrite: false,
-                    timeout: 30,
-                    retry_count: 3,
-                    codec: self.context.codec,
-                    format: self.context.format,
-                    quality: self.context.quality,
-                };
-                let downloader = HttpStreamDownloader::new(url, config, self.context.clone());
-
-                DownloaderType::HttpStream(downloader)
-            }
-            DownloaderType::HttpHls(_) => {
-                let config = DownloadConfig {
-                    output_path: file_path.clone(),
-                    overwrite: false,
-                    timeout: 30,
-                    retry_count: 3,
-                    codec: self.context.codec,
-                    format: self.context.format,
-                    quality: self.context.quality,
-                };
-                let downloader = HttpHlsDownloader::new(url, config, self.context.clone());
-
-                DownloaderType::HttpHls(downloader)
-            }
-        };
-
-        match &mut final_downloader {
-            DownloaderType::HttpStream(downloader) => match downloader.start(cx) {
-                Ok(_) => {}
-                Err(e) => {
-                    return Err(e);
-                }
-            },
-            DownloaderType::HttpHls(downloader) => match downloader.start(cx) {
-                Ok(_) => {}
-                Err(e) => {
-                    return Err(e);
-                }
-            },
-        }
-
-        self.downloader.lock().unwrap().replace(final_downloader);
-
-        Ok(())
-    }
-
-    /// 检查是否为网络相关错误
-    fn is_network_error(error: &anyhow::Error) -> bool {
-        let error_str = error.to_string().to_lowercase();
-
-        // 检查常见的网络错误关键词
-        error_str.contains("network")
-            || error_str.contains("connection")
-            || error_str.contains("timeout")
-            || error_str.contains("dns")
-            || error_str.contains("socket")
-            || error_str.contains("unreachable")
-            || error_str.contains("reset")
-            || error_str.contains("refused")
-            || error_str.contains("无法连接")
-            || error_str.contains("连接被重置")
-            || error_str.contains("连接超时")
-            || error_str.contains("网络")
-            || error_str.contains("请求失败")
-            || error_str.contains("无法读取响应体")
-    }
-
-    /// 带重连的下载方法
-    pub async fn start_download_with_retry(
-        &self,
-        cx: &mut AsyncApp,
-        room_info: &LiveRoomInfoData,
-        user_info: &LiveUserInfo,
-        record_dir: &str,
-    ) -> Result<()> {
-        let mut retry_count = 0;
-
-        loop {
-            match self
-                .start_download(cx, room_info, user_info, record_dir)
-                .await
-            {
-                Ok(_) => {
-                    // 下载成功启动，重置重连计数
-                    self.context.update_stats(|stats| {
-                        stats.reconnect_count = 0;
-                    });
-
-                    // 更新UI状态为录制中
-                    self.update_card_status(cx, RoomCardStatus::Recording(0.0));
-
-                    // 下载成功启动，现在监控下载状态
-                    if self.is_auto_reconnect() {
-                        // 启动状态监控，处理自动重连和状态管理
-                        self.monitor_download_status(cx, room_info, user_info, record_dir)
-                            .await?;
-                    }
-                    return Ok(());
-                }
-                Err(e) if Self::is_network_error(&e) => {
-                    retry_count += 1;
-                    self.context.update_stats(|stats| {
-                        stats.reconnect_count = retry_count;
-                    });
-
-                    let delay = self.calculate_backoff_delay(retry_count);
-
-                    eprintln!("网络异常，正在尝试重连 (第{retry_count}次，等待{delay:?}): {e}");
-
-                    // 更新UI状态显示重连信息
-                    self.update_card_status(
-                        cx,
-                        RoomCardStatus::Error(format!(
-                            "网络中断，第{retry_count}次重连 ({delay_secs}秒后)",
-                            delay_secs = delay.as_secs()
-                        )),
-                    );
-
-                    // 发送重连事件
-                    self.context.push_event(DownloadEvent::Reconnecting {
-                        attempt: retry_count,
-                        delay_secs: delay.as_secs(),
-                    });
-
-                    cx.background_executor().timer(delay).await;
-                    continue;
-                }
-                Err(e) => {
-                    // 非网络错误，直接返回
-                    eprintln!("非网络错误，停止重连: {e}");
-
-                    // 更新UI状态显示错误
-                    self.update_card_status(cx, RoomCardStatus::Error(format!("录制失败: {e}")));
-
-                    // 发送错误事件
-                    self.context.push_event(DownloadEvent::Error {
-                        error: DownloaderError::InvalidRecordingConfig {
-                            field: "stream_url".to_string(),
-                            value: "unavailable".to_string(),
-                            reason: format!("非网络错误: {e}"),
-                        },
-                    });
-
-                    return Err(e);
-                }
-            }
-        }
-    }
-
-    pub async fn stop(&self) {
-        // 设置停止状态
-        self.context.set_running(false);
-
-        {
-            let mut downloader_guard = self.downloader.lock().unwrap();
-            if let Some(ref mut downloader) = downloader_guard.as_mut() {
-                match downloader {
-                    DownloaderType::HttpStream(downloader) => {
-                        let _ = downloader.stop().await;
-                    }
-                    DownloaderType::HttpHls(downloader) => {
-                        let _ = downloader.stop().await;
-                    }
-                }
-            }
-        }
-    }
-
-    /// 监控下载状态，根据事件处理重连或停止
-    pub async fn monitor_download_status(
-        &self,
-        cx: &mut AsyncApp,
-        room_info: &LiveRoomInfoData,
-        user_info: &LiveUserInfo,
-        record_dir: &str,
-    ) -> Result<()> {
-        let mut consecutive_errors = 0;
-        const MAX_CONSECUTIVE_ERRORS: u32 = 5;
-
-        while self.context.is_running() {
-            // 检查下载器状态
-            let status = {
-                if let Ok(downloader_guard) = self.downloader.lock() {
-                    if let Some(ref downloader) = downloader_guard.as_ref() {
-                        match downloader {
-                            DownloaderType::HttpStream(downloader) => downloader.status(),
-                            DownloaderType::HttpHls(downloader) => downloader.status(),
-                        }
-                    } else {
-                        DownloadStatus::NotStarted
-                    }
-                } else {
-                    DownloadStatus::Error("无法获取下载器锁".to_string())
-                }
-            };
-
-            match status {
-                DownloadStatus::Error(error) => {
-                    consecutive_errors += 1;
-
-                    // 判断是否为网络错误
-                    let is_network_error = Self::is_network_error(&anyhow::anyhow!("{}", error));
-
-                    if is_network_error
-                        && consecutive_errors <= MAX_CONSECUTIVE_ERRORS
-                        && self.is_auto_reconnect()
-                    {
-                        // 发送错误事件（可恢复）
-                        self.context.push_event(DownloadEvent::Error {
-                            error: DownloaderError::NetworkError(error.clone()),
-                        });
-
-                        // 停止当前下载器
-                        self.stop().await;
-
-                        // 计算退避延迟
-                        let delay = self.calculate_backoff_delay(consecutive_errors);
-
-                        // 发送重连事件
-                        self.context.push_event(DownloadEvent::Reconnecting {
-                            attempt: consecutive_errors,
-                            delay_secs: delay.as_secs(),
-                        });
-
-                        // 等待后重新启动下载
-                        cx.background_executor().timer(delay).await;
-
-                        match self
-                            .start_download(cx, room_info, user_info, record_dir)
-                            .await
-                        {
-                            Ok(_) => {
-                                consecutive_errors = 0; // 重置错误计数
-                                eprintln!("✅ 重连成功");
-                            }
-                            Err(e) => {
-                                eprintln!("❌ 重连失败: {e}");
-                            }
-                        }
-                    } else {
-                        // 不可恢复错误或超过最大重试次数
-                        self.context.push_event(DownloadEvent::Error {
-                            error: DownloaderError::NetworkError(format!(
-                                "连续错误超过{MAX_CONSECUTIVE_ERRORS}次，停止重连: {error}"
-                            )),
-                        });
-
-                        self.stop().await;
-                        break;
-                    }
-                }
-                DownloadStatus::Completed => {
-                    // 下载完成
-                    if let Some(stats) = self.get_download_stats() {
-                        self.context.push_event(DownloadEvent::Completed {
-                            file_path: "".to_string(), // 具体路径由下载器提供
-                            file_size: stats.bytes_downloaded,
-                        });
-                    }
-                    break;
-                }
-                DownloadStatus::Downloading => {
-                    consecutive_errors = 0; // 重置错误计数
-
-                    // 更新进度
-                    if let Some(stats) = self.get_download_stats() {
-                        self.context.push_event(DownloadEvent::Progress {
-                            bytes_downloaded: stats.bytes_downloaded,
-                            download_speed_kbps: stats.download_speed_kbps,
-                            duration_ms: stats.duration_ms,
-                        });
-                    }
-                }
-                DownloadStatus::Reconnecting => {
-                    // 下载器内部正在重连，保持等待
-                }
-                DownloadStatus::NotStarted => {
-                    // 下载器未启动，可能需要重新启动
-                    eprintln!("⚠️  下载器未启动，尝试重新启动");
-                    match self
-                        .start_download(cx, room_info, user_info, record_dir)
-                        .await
-                    {
-                        Ok(_) => {
-                            eprintln!("✅ 重新启动成功");
-                        }
-                        Err(e) => {
-                            eprintln!("❌ 重新启动失败: {e}");
-                            consecutive_errors += 1;
-                        }
-                    }
-                }
-            }
-
-            // 等待一段时间后再次检查
-            cx.background_executor().timer(Duration::from_secs(2)).await;
-        }
-
-        Ok(())
-    }
-
-    /// 获取下载统计信息
-    fn get_download_stats(&self) -> Option<DownloadStats> {
-        if let Ok(downloader_guard) = self.downloader.lock() {
-            downloader_guard
-                .as_ref()
-                .map(|downloader| match downloader {
-                    DownloaderType::HttpStream(downloader) => downloader.stats(),
-                    DownloaderType::HttpHls(downloader) => downloader.stats(),
-                })
-        } else {
-            None
-        }
-    }
-
-    fn is_auto_reconnect(&self) -> bool {
-        *self.is_auto_reconnect.lock().unwrap()
     }
 }

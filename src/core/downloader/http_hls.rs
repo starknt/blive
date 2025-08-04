@@ -1,6 +1,5 @@
 use crate::core::downloader::{
-    DownloadConfig, DownloadEvent, DownloadStats, DownloadStatus, Downloader, DownloaderContext,
-    DownloaderError,
+    DownloadConfig, DownloadEvent, DownloadStatus, Downloader, DownloaderContext, DownloaderError,
 };
 use crate::settings::StreamCodec;
 use anyhow::Result;
@@ -15,7 +14,6 @@ pub struct HttpHlsDownloader {
     url: String,
     config: DownloadConfig,
     status: DownloadStatus,
-    stats: DownloadStats,
     start_time: Option<Instant>,
     context: DownloaderContext,
     stop_rx: Option<oneshot::Receiver<()>>,
@@ -27,7 +25,6 @@ impl HttpHlsDownloader {
             url,
             config,
             status: DownloadStatus::NotStarted,
-            stats: DownloadStats::default(),
             start_time: None,
             context,
             stop_rx: None,
@@ -239,9 +236,5 @@ impl Downloader for HttpHlsDownloader {
 
     fn status(&self) -> DownloadStatus {
         self.status.clone()
-    }
-
-    fn stats(&self) -> DownloadStats {
-        self.stats.clone()
     }
 }

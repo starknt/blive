@@ -1,3 +1,4 @@
+extern crate embed_resource;
 use std::process::Command;
 
 fn main() {
@@ -47,6 +48,8 @@ fn main() {
             // todo(windows): This is to avoid stack overflow. Remove it when solved.
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
+
+        embed_resource::compile("manifest.rc", embed_resource::NONE);
 
         let icon = "resources/icons/win/icon.ico";
         let icon = std::path::Path::new(icon);

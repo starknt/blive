@@ -716,6 +716,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "directories",
+ "embed-resource",
  "ffmpeg-sidecar",
  "futures",
  "gpui",

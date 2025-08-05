@@ -18,7 +18,7 @@ tracing-appender = { version = "0.2" }
 futures = { version = "0.3" }
 num_enum = { version = "0.7" }
 leon = "3.0.2"
-rfd = "0.15.4"
+rfd = { version = "0.15.4", features = ["common-controls-v6"] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = { version = "0.10.4" }
 directories = "6"
@@ -37,6 +37,7 @@ identifier = "com.starknt.blive"
 version = "0.1.0"
 
 [build-dependencies]
+embed-resource = "3.0"
 ffmpeg-sidecar = { version = "2", default-features = true, features = [] }
 
 [dev-dependencies]

@@ -136,7 +136,7 @@ function prepare_binaries() {
     local app_path=$2
 
     echo "Unpacking dSYMs for $architecture"
-    exe_path="target/${architecture}/${target_dir}/BLive"
+    exe_path="target/${architecture}/${target_dir}/blive"
     if ! dsymutil --flat "${exe_path}" 2> target/dsymutil.log; then
         echo "dsymutil failed"
         cat target/dsymutil.log
@@ -147,7 +147,7 @@ function prepare_binaries() {
         version="$version-$(git rev-parse --short HEAD)"
     fi
 
-    cp target/${architecture}/${target_dir}/BLive "${app_path}/Contents/MacOS/BLive"
+    cp target/${architecture}/${target_dir}/blive "${app_path}/Contents/MacOS/blive"
 }
 
 function sign_app_binaries() {
@@ -230,7 +230,6 @@ function sign_app_binaries() {
 
         echo "Adding license agreement to DMG"
         npm install --global dmg-license minimist
-        dmg-license script/terms/terms.json "${dmg_file_path}"
 
         if [ "$open_result" = true ]; then
             open $dmg_target_directory

@@ -57,8 +57,15 @@ jobs:
         run: cargo nextest run --all-features
       - name: Install cargo-bundle
         run: cargo install cargo-bundle
-      - name: Build & Bundle
+      - if: ${{ matrix.os != 'windows-latest' }}
+        name: Build & Bundle
         run: cargo bundle --release
+      - if: ${{ matrix.os == 'windows-latest' }}
+        name: Compile .ISS to .EXE Installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: resources/windows/blive.iss
+          options: /O target/release/bundle
       - name: Upload bundle artefact
         uses: actions/upload-artifact@v4
         with:

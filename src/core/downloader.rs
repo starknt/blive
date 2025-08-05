@@ -79,15 +79,12 @@ pub enum DownloaderType {
 pub struct BLiveDownloader {
     context: DownloaderContext,
     downloader: Mutex<Option<DownloaderType>>,
-    // 网络重连相关字段
     max_reconnect_attempts: Mutex<u32>,
     reconnect_delay: Mutex<Duration>,
     is_auto_reconnect: Mutex<bool>,
-    // 新增：重连管理器
     reconnect_manager: Mutex<ReconnectManager>,
 }
 
-/// 重连管理器
 #[derive(Debug)]
 struct ReconnectManager {
     current_attempt: u32,

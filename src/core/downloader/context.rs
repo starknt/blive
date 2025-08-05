@@ -163,7 +163,9 @@ impl DownloaderContext {
                 let status = if error.is_recoverable() {
                     RoomCardStatus::Error(format!("网络异常，正在重连: {error}"))
                 } else {
-                    RoomCardStatus::Error(format!("录制失败: {error}"))
+                    // 如果是不可恢复的错误，停止下载器, 等待重新连接
+                    self.set_status(DownloadStatus::Error(error.clone()));
+                    RoomCardStatus::Error(format!("录制失败, 等待重新连接: {error}"))
                 };
                 self.update_card_status(cx, status);
 
@@ -171,11 +173,6 @@ impl DownloaderContext {
                 self.update_stats(|stats| {
                     stats.last_error = Some(error.to_string());
                 });
-
-                // 如果是不可恢复的错误，停止下载器
-                if !error.is_recoverable() {
-                    self.set_running(false);
-                }
             }
             DownloadEvent::Reconnecting {
                 attempt,
@@ -194,7 +191,7 @@ impl DownloaderContext {
                 });
 
                 // 重连期间保持运行状态
-                self.set_running(true);
+                // self.set_running(true);
             }
             DownloadEvent::Completed { file_size, .. } => {
                 self.update_card_status(cx, RoomCardStatus::Waiting);

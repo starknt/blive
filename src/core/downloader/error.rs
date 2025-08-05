@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DownloaderError {
     // 网络相关错误
     #[error("网络连接失败: {message} (重试次数: {retry_count})")]

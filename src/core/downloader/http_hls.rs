@@ -1,5 +1,6 @@
 use crate::core::downloader::{
     DownloadConfig, DownloadEvent, DownloadStatus, Downloader, DownloaderContext, DownloaderError,
+    REFERER, USER_AGENT,
 };
 use crate::settings::StreamCodec;
 use anyhow::Result;
@@ -28,12 +29,6 @@ impl HttpHlsDownloader {
     }
 
     fn download_stream(url: &str, config: &DownloadConfig) -> Result<FfmpegChild> {
-        let user_agent_header = format!(
-            "User-Agent: {}",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        );
-        let referer_header = format!("Referer: {}", "https://live.bilibili.com/");
-
         let mut cmd = FfmpegCommand::new();
 
         if config.overwrite {
@@ -42,10 +37,8 @@ impl HttpHlsDownloader {
             cmd.no_overwrite();
         }
 
-        cmd.arg("-headers")
-            .arg(user_agent_header)
-            .arg("-headers")
-            .arg(referer_header)
+        cmd.args(["-headers", format!("User-Agent: {USER_AGENT}").as_str()])
+            .args(["-headers", format!("Referer: {REFERER}").as_str()])
             .arg("-i")
             .arg(url)
             .args(["-vf", "scale=1920:1080"])
@@ -86,109 +79,108 @@ impl Downloader for HttpHlsDownloader {
         let mut bytes_downloaded = 0;
         cx.background_executor()
             .spawn(async move {
-                match Self::download_stream(&url, &config) {
-                    Ok(mut process) => {
-                        match process.iter() {
-                            Ok(iter) => {
-                                for event in iter {
-                                    // 检查是否收到停止信号
-                                    if !context.is_running() {
-                                        process.quit().unwrap();
-                                        if let Err(e) = process.wait() {
-                                            eprintln!("FFmpeg进程wait失败: {e}");
-                                        } else {
-                                            println!("FFmpeg进程已成功清理");
-                                        }
-                                        context.push_event(DownloadEvent::Completed {
-                                            file_path: output_path.clone(),
-                                            file_size: 0,
-                                        });
-                                        let _ = stop_tx.send(());
-                                        return;
-                                    }
+                let mut process = match Self::download_stream(&url, &config) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        context.push_event(DownloadEvent::Error {
+                            error: DownloaderError::StartupFailed {
+                                command: format!("ffmpeg -i {url}"),
+                                stderr: e.to_string(),
+                            },
+                        });
+                        return;
+                    }
+                };
 
-                                    match event {
-                                        FfmpegEvent::Progress(progress) => {
-                                            bytes_downloaded += progress.size_kb as u64;
-                                            context.push_event(DownloadEvent::Progress {
-                                                bytes_downloaded,
-                                                download_speed_kbps: progress.bitrate_kbps,
-                                                duration_ms: start_time.elapsed().as_millis()
-                                                    as u64,
+                match process.iter() {
+                    Ok(iter) => {
+                        for event in iter {
+                            // 检查是否收到停止信号
+                            if !context.is_running() {
+                                process.quit().unwrap();
+                                if let Err(e) = process.wait() {
+                                    eprintln!("FFmpeg进程wait失败: {e}");
+                                } else {
+                                    println!("FFmpeg进程已成功清理");
+                                }
+                                context.push_event(DownloadEvent::Completed {
+                                    file_path: output_path.clone(),
+                                    file_size: 0,
+                                });
+                                let _ = stop_tx.send(());
+                                return;
+                            }
+
+                            match event {
+                                FfmpegEvent::Progress(progress) => {
+                                    bytes_downloaded += progress.size_kb as u64;
+                                    context.push_event(DownloadEvent::Progress {
+                                        bytes_downloaded,
+                                        download_speed_kbps: progress.bitrate_kbps,
+                                        duration_ms: start_time.elapsed().as_millis() as u64,
+                                    });
+                                }
+                                FfmpegEvent::Done => {
+                                    context.push_event(DownloadEvent::Completed {
+                                        file_path: output_path.clone(),
+                                        file_size: bytes_downloaded,
+                                    });
+                                }
+                                FfmpegEvent::LogEOF => {
+                                    context.push_event(DownloadEvent::Completed {
+                                        file_path: output_path.clone(),
+                                        file_size: 0,
+                                    });
+                                }
+                                FfmpegEvent::Log(level, msg) => {
+                                    match level {
+                                        ffmpeg_sidecar::event::LogLevel::Fatal => {
+                                            context.push_event(DownloadEvent::Error {
+                                                error: DownloaderError::FfmpegRuntimeError {
+                                                    error_type: "Fatal".to_string(),
+                                                    message: msg,
+                                                },
                                             });
                                         }
-                                        FfmpegEvent::Done => {
-                                            context.push_event(DownloadEvent::Completed {
-                                                file_path: output_path.clone(),
-                                                file_size: 0,
-                                            });
-                                        }
-                                        FfmpegEvent::LogEOF => {
-                                            context.push_event(DownloadEvent::Completed {
-                                                file_path: output_path.clone(),
-                                                file_size: 0,
-                                            });
-                                        }
-                                        FfmpegEvent::Log(level, msg) => {
-                                            match level {
-                                                ffmpeg_sidecar::event::LogLevel::Fatal => {
-                                                    context.push_event(DownloadEvent::Error {
-                                                        error:
-                                                            DownloaderError::FfmpegRuntimeError {
-                                                                error_type: "Fatal".to_string(),
-                                                                message: msg,
-                                                            },
-                                                    });
-                                                }
-                                                ffmpeg_sidecar::event::LogLevel::Error => {
-                                                    // 根据错误消息智能分类
-                                                    if msg.contains("Connection reset")
-                                                        || msg.contains("timeout")
-                                                        || msg.contains("No route to host")
-                                                        || msg.contains("Connection refused")
-                                                    {
-                                                        context.push_event(DownloadEvent::Error {
+                                        ffmpeg_sidecar::event::LogLevel::Error => {
+                                            // 根据错误消息智能分类
+                                            if msg.contains("Connection reset")
+                                                || msg.contains("timeout")
+                                                || msg.contains("No route to host")
+                                                || msg.contains("Connection refused")
+                                            {
+                                                context.push_event(DownloadEvent::Error {
                                                     error:
                                                         DownloaderError::network_connection_failed(
                                                             msg, 0,
                                                         ),
                                                 });
-                                                    } else if msg.contains("Protocol not found")
-                                                        || msg.contains("Invalid data found")
-                                                        || msg.contains("Decoder failed")
-                                                    {
-                                                        context.push_event(DownloadEvent::Error {
+                                            } else if msg.contains("Protocol not found")
+                                                || msg.contains("Invalid data found")
+                                                || msg.contains("Decoder failed")
+                                            {
+                                                context.push_event(DownloadEvent::Error {
                                                     error: DownloaderError::StreamEncodingError {
                                                         codec: "unknown".to_string(),
                                                         details: msg,
                                                     },
                                                 });
-                                                    } else {
-                                                        //     #[cfg(debug_assertions)]
-                                                        // context.push_event(DownloadEvent::Error {
-                                                        //     error: DownloaderError::FfmpegRuntimeError {
-                                                        //         error_type: "Error".to_string(),
-                                                        //         message: msg,
-                                                        //     },
-                                                        // });
-                                                    }
-                                                }
-                                                _ => {
-                                                    // 其他日志级别暂时忽略
-                                                }
+                                            } else {
+                                                #[cfg(debug_assertions)]
+                                                context.push_event(DownloadEvent::Error {
+                                                    error: DownloaderError::FfmpegRuntimeError {
+                                                        error_type: "Error".to_string(),
+                                                        message: msg,
+                                                    },
+                                                });
                                             }
                                         }
-                                        _ => {}
+                                        _ => {
+                                            // 其他日志级别暂时忽略
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                context.push_event(DownloadEvent::Error {
-                                    error: DownloaderError::StartupFailed {
-                                        command: "".to_string(),
-                                        stderr: e.to_string(),
-                                    },
-                                });
+                                _ => {}
                             }
                         }
                     }

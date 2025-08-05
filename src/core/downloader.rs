@@ -68,7 +68,7 @@ pub enum DownloadStatus {
     /// 重连中
     Reconnecting,
     /// 错误
-    Error(String),
+    Error(DownloaderError),
 }
 
 pub enum DownloaderType {
@@ -176,6 +176,7 @@ impl BLiveDownloader {
 
                 // 下载成功启动，现在监控下载状态
                 if self.is_auto_reconnect() {
+                    println!("启动状态监控，处理自动重连和状态管理");
                     // 启动状态监控，处理自动重连和状态管理
                     self.monitor_download_status(cx, record_dir).await?;
                 }
@@ -254,68 +255,39 @@ impl BLiveDownloader {
 
     /// 监控下载状态，根据事件处理重连或停止
     pub async fn monitor_download_status(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
-        let mut consecutive_errors = 0;
-        const MAX_CONSECUTIVE_ERRORS: u32 = 5;
-
         while self.context.is_running() {
             // 检查下载器状态
             let status = self.context.get_status();
 
             match status {
                 DownloadStatus::Error(error) => {
-                    consecutive_errors += 1;
+                    let reconnect_count = self.context.get_stats().reconnect_count;
 
                     // 判断是否为网络错误
                     let is_network_error = Self::is_network_error(&anyhow::anyhow!("{}", error));
 
-                    if is_network_error
-                        && consecutive_errors <= MAX_CONSECUTIVE_ERRORS
-                        && self.is_auto_reconnect()
-                    {
-                        // 发送错误事件（可恢复）
-                        self.context.push_event(DownloadEvent::Error {
-                            error: DownloaderError::NetworkError(error.to_owned()),
-                        });
-
+                    if is_network_error && self.is_auto_reconnect() {
                         // 停止当前下载器
                         self.stop().await;
 
                         // 计算退避延迟
-                        let delay = self.calculate_backoff_delay(consecutive_errors);
+                        let delay = self.calculate_backoff_delay(reconnect_count);
 
                         // 等待后重新启动下载
                         cx.background_executor().timer(delay).await;
 
                         // 发送重连事件
                         self.context.push_event(DownloadEvent::Reconnecting {
-                            attempt: consecutive_errors,
+                            attempt: reconnect_count,
                             delay_secs: delay.as_secs(),
                         });
-                    } else {
-                        // 不可恢复错误或超过最大重试次数
-                        self.context.push_event(DownloadEvent::Error {
-                            error: DownloaderError::NetworkError(format!(
-                                "连续错误超过{MAX_CONSECUTIVE_ERRORS}次，停止重连: {error}"
-                            )),
-                        });
-
-                        self.stop().await;
-                        break;
                     }
                 }
                 DownloadStatus::Completed => {
-                    // 下载完成
-                    if let Some(stats) = self.get_download_stats() {
-                        self.context.push_event(DownloadEvent::Completed {
-                            file_path: "".to_string(), // 具体路径由下载器提供
-                            file_size: stats.bytes_downloaded,
-                        });
-                    }
+                    // 退出监控
                     break;
                 }
                 DownloadStatus::Downloading => {
-                    consecutive_errors = 0; // 重置错误计数
-
                     // 更新进度
                     if let Some(stats) = self.get_download_stats() {
                         self.context.push_event(DownloadEvent::Progress {
@@ -326,27 +298,34 @@ impl BLiveDownloader {
                     }
                 }
                 DownloadStatus::Reconnecting => {
-                    // 下载器内部正在重连，保持等待
+                    self.context.update_stats(|stats| {
+                        stats.reconnect_count += 1;
+                    });
+
                     match self.start_download(cx, record_dir).await {
                         Ok(_) => {
-                            consecutive_errors = 0; // 重置错误计数
                             eprintln!("✅ 重连成功");
                         }
                         Err(e) => {
                             eprintln!("❌ 重连失败: {e}");
+                            self.context.push_event(DownloadEvent::Error {
+                                error: DownloaderError::ConnectionRefused {
+                                    url: "".to_string(),
+                                },
+                            });
                         }
                     }
                 }
                 DownloadStatus::NotStarted => {
                     // 下载器未启动，可能需要重新启动
                     eprintln!("⚠️  下载器未启动，尝试重新启动");
+
                     match self.start_download(cx, record_dir).await {
                         Ok(_) => {
                             eprintln!("✅ 重新启动成功");
                         }
                         Err(e) => {
                             eprintln!("❌ 重新启动失败: {e}");
-                            consecutive_errors += 1;
                         }
                     }
                 }

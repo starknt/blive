@@ -1,5 +1,6 @@
 use crate::core::downloader::{
     DownloadConfig, DownloadEvent, DownloadStatus, Downloader, DownloaderContext, DownloaderError,
+    REFERER, USER_AGENT,
 };
 use crate::settings::StreamCodec;
 use anyhow::{Context, Result};
@@ -28,12 +29,6 @@ impl HttpStreamDownloader {
     }
 
     fn download_stream(url: &str, config: &DownloadConfig) -> Result<FfmpegChild> {
-        let user_agent_header = format!(
-            "User-Agent: {}",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        );
-        let referer_header = format!("Referer: {}", "https://live.bilibili.com/");
-
         let mut cmd = FfmpegCommand::new();
 
         if config.overwrite {
@@ -42,10 +37,8 @@ impl HttpStreamDownloader {
             cmd.no_overwrite();
         }
 
-        cmd.arg("-headers")
-            .arg(user_agent_header)
-            .arg("-headers")
-            .arg(referer_header)
+        cmd.args(["-headers", format!("User-Agent: {USER_AGENT}").as_str()])
+            .args(["-headers", format!("Referer: {REFERER}").as_str()])
             .arg("-i")
             .arg(url)
             .args(["-vf", "scale=1920:1080"])
@@ -131,23 +124,15 @@ impl Downloader for HttpStreamDownloader {
                                 });
                             }
                             FfmpegEvent::Done => {
-                                let file_size = std::fs::metadata(&output_path)
-                                    .map(|m| m.len())
-                                    .unwrap_or(bytes_downloaded);
-
                                 context.push_event(DownloadEvent::Completed {
                                     file_path: output_path.clone(),
-                                    file_size,
+                                    file_size: bytes_downloaded,
                                 });
                             }
                             FfmpegEvent::LogEOF => {
-                                let file_size = std::fs::metadata(&output_path)
-                                    .map(|m| m.len())
-                                    .unwrap_or(bytes_downloaded);
-
                                 context.push_event(DownloadEvent::Completed {
                                     file_path: output_path.clone(),
-                                    file_size,
+                                    file_size: bytes_downloaded,
                                 });
                             }
                             FfmpegEvent::Log(level, msg) => {
@@ -183,13 +168,13 @@ impl Downloader for HttpStreamDownloader {
                                                 },
                                             });
                                         } else {
-                                            // #[cfg(debug_assertions)]
-                                            // context.push_event(DownloadEvent::Error {
-                                            //     error: DownloaderError::FfmpegRuntimeError {
-                                            //         error_type: "Error".to_string(),
-                                            //         message: msg,
-                                            //     },
-                                            // });
+                                            #[cfg(debug_assertions)]
+                                            context.push_event(DownloadEvent::Error {
+                                                error: DownloaderError::FfmpegRuntimeError {
+                                                    error_type: "Error".to_string(),
+                                                    message: msg,
+                                                },
+                                            });
                                         }
                                     }
                                     _ => {}

@@ -13,8 +13,6 @@ use std::time::Instant;
 pub struct HttpStreamDownloader {
     url: String,
     config: DownloadConfig,
-    status: DownloadStatus,
-    start_time: Option<Instant>,
     context: DownloaderContext,
     stop_rx: Option<oneshot::Receiver<()>>,
 }
@@ -24,16 +22,9 @@ impl HttpStreamDownloader {
         Self {
             url,
             config,
-            status: DownloadStatus::NotStarted,
-            start_time: None,
             context,
             stop_rx: None,
         }
-    }
-
-    /// 发送事件到队列
-    fn emit_event(&self, event: DownloadEvent) {
-        self.context.push_event(event);
     }
 
     fn download_stream(url: &str, config: &DownloadConfig) -> Result<FfmpegChild> {
@@ -78,15 +69,14 @@ impl Downloader for HttpStreamDownloader {
         let url = self.url.clone();
 
         // 更新状态
-        self.status = DownloadStatus::Downloading;
-        self.start_time = Some(Instant::now());
         self.context.set_running(true);
+        self.context.set_status(DownloadStatus::Downloading);
 
         let config = self.config.clone();
         let output_path = config.output_path.clone();
 
         // 发送开始事件
-        self.emit_event(DownloadEvent::Started {
+        self.context.push_event(DownloadEvent::Started {
             file_path: output_path.clone(),
         });
 
@@ -216,8 +206,8 @@ impl Downloader for HttpStreamDownloader {
     }
 
     async fn stop(&mut self) -> Result<()> {
-        self.status = DownloadStatus::NotStarted;
-        self.context.set_running(false);
+        // self.context.set_running(false);
+        // self.context.set_status(DownloadStatus::NotStarted);
 
         if let Some(stop_rx) = self.stop_rx.take() {
             match stop_rx.await {
@@ -234,6 +224,6 @@ impl Downloader for HttpStreamDownloader {
     }
 
     fn status(&self) -> DownloadStatus {
-        self.status.clone()
+        self.context.get_status()
     }
 }

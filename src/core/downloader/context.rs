@@ -9,7 +9,7 @@ use gpui::{AsyncApp, WeakEntity};
 use crate::{
     components::{RoomCard, RoomCardStatus},
     core::{
-        HttpClient,
+        DownloadStatus, HttpClient,
         downloader::{DownloadEvent, DownloadStats, utils},
         http_client::{room::LiveRoomInfoData, user::LiveUserInfo},
     },
@@ -51,6 +51,7 @@ impl Default for DownloadConfig {
 
 #[derive(Clone)]
 pub struct DownloaderContext {
+    status: Arc<Mutex<DownloadStatus>>,
     pub entity: WeakEntity<RoomCard>,
     pub client: HttpClient,
     pub room_info: LiveRoomInfoData,
@@ -74,6 +75,7 @@ impl DownloaderContext {
         codec: StreamCodec,
     ) -> Self {
         Self {
+            status: Arc::new(Mutex::new(DownloadStatus::NotStarted)),
             entity,
             client,
             room_info,
@@ -85,6 +87,24 @@ impl DownloaderContext {
             is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             event_queue: Arc::new(std::sync::Mutex::new(VecDeque::new())),
         }
+    }
+
+    pub fn init(&self) {
+        self.stats.lock().unwrap().reset();
+        self.is_running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.event_queue.lock().unwrap().clear();
+        self.set_status(DownloadStatus::NotStarted);
+    }
+
+    pub fn set_status(&self, status: DownloadStatus) {
+        if let Ok(mut status_guard) = self.status.lock() {
+            *status_guard = status;
+        }
+    }
+
+    pub fn get_status(&self) -> DownloadStatus {
+        self.status.lock().unwrap().clone()
     }
 
     pub fn update_card_status(&self, cx: &mut AsyncApp, status: RoomCardStatus) {

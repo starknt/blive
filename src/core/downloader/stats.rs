@@ -7,3 +7,12 @@ pub struct DownloadStats {
     pub reconnect_count: u32,
     pub last_error: Option<String>,
 }
+
+impl DownloadStats {
+    pub fn reset(&mut self) {
+        self.bytes_downloaded = 0;
+        self.download_speed_kbps = 0.0;
+        self.duration_ms = 0;
+        self.last_error = None;
+    }
+}

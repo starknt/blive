@@ -28,6 +28,8 @@ use std::{sync::Arc, time::Duration};
 enum RoomCardEvent {
     LiveStatusChanged(LiveStatus),
     StatusChanged(RoomCardStatus),
+    StartRecording,
+    StopRecording,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -56,6 +58,7 @@ pub struct RoomCard {
     pub(crate) settings: RoomSettings,
     _subscriptions: Vec<Subscription>,
     pub downloader: Option<Arc<BLiveDownloader>>,
+    pub user_stop: bool,
 }
 
 impl RoomCard {
@@ -75,6 +78,7 @@ impl RoomCard {
             user_info: user,
             settings,
             downloader: None,
+            user_stop: false,
         }
     }
 
@@ -147,10 +151,33 @@ impl RoomCard {
                     cx.emit(RoomCardEvent::StatusChanged(card.status.clone()));
                 });
             }
+            RoomCardEvent::StartRecording => {
+                this.update(cx, |this, cx| {
+                    this.user_stop = false;
+                    cx.notify();
+                });
+            }
+            RoomCardEvent::StopRecording => {
+                this.update(cx, |this, cx| {
+                    let downloader = this.downloader.take();
+                    cx.foreground_executor()
+                        .spawn(async move {
+                            if let Some(downloader) = downloader {
+                                downloader.stop().await;
+                            }
+                        })
+                        .detach();
+                    this.status = RoomCardStatus::Waiting;
+                    this.user_stop = true;
+                    cx.notify();
+                });
+            }
             RoomCardEvent::StatusChanged(status) => {
                 match status {
                     RoomCardStatus::Recording(_speed) => {
-                        Self::do_record(this, cx);
+                        if !this.read(cx).user_stop {
+                            Self::do_record(this, cx);
+                        }
                     }
                     RoomCardStatus::Waiting => {
                         this.update(cx, |this, cx| {
@@ -344,7 +371,10 @@ impl Render for RoomCard {
                                 h_flex()
                                     .gap_2()
                                     .child({
-                                        if matches!(self.status, RoomCardStatus::Recording(_)) {
+                                        if matches!(
+                                            self.status,
+                                            RoomCardStatus::Recording(_) | RoomCardStatus::Waiting
+                                        ) {
                                             h_flex().flex_1().children(vec![
                                                 Button::new("record")
                                                     .primary()
@@ -369,6 +399,9 @@ impl Render for RoomCard {
                                                                         "房间号: {room_id}"
                                                                     )),
                                                                 );
+                                                                cx.emit(
+                                                                    RoomCardEvent::StartRecording,
+                                                                );
                                                                 RoomCardStatus::Recording(0.0)
                                                             }
                                                             RoomCardStatus::Recording(_) => {
@@ -377,6 +410,9 @@ impl Render for RoomCard {
                                                                     Some(&format!(
                                                                         "房间号: {room_id}"
                                                                     )),
+                                                                );
+                                                                cx.emit(
+                                                                    RoomCardEvent::StopRecording,
                                                                 );
                                                                 RoomCardStatus::Waiting
                                                             }
@@ -391,9 +427,6 @@ impl Render for RoomCard {
                                                             }
                                                         };
                                                         card.status = new_status.clone();
-                                                        cx.emit(RoomCardEvent::StatusChanged(
-                                                            new_status,
-                                                        ));
                                                         cx.notify();
                                                     })),
                                             ])

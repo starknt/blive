@@ -9,7 +9,7 @@ use gpui_component::{
 };
 
 use crate::{
-    components::{RoomCard, RoomInput, RoomInputEvent},
+    components::{RoomCard, RoomCardStatus, RoomInput, RoomInputEvent},
     logger::{log_recording_error, log_user_action},
     settings::RoomSettings,
     state::AppState,
@@ -152,6 +152,16 @@ impl Render for BLiveApp {
         let modal_layer = Root::render_modal_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
         let state = AppState::global(cx);
+        let recording_count = state
+            .room_entities
+            .iter()
+            .filter(|room| matches!(room.read(cx).status, RoomCardStatus::Recording(_)))
+            .count();
+        let error_count = state
+            .room_entities
+            .iter()
+            .filter(|room| matches!(room.read(cx).status, RoomCardStatus::Error(_)))
+            .count();
 
         div()
             .size_full()
@@ -336,7 +346,7 @@ impl Render for BLiveApp {
                                                                                                     .font_semibold()
                                                                                                     .text_2xl()
                                                                                                     .text_color(gpui::rgb(0x10b981))
-                                                                                                    .child(Text::String("0".into())),
+                                                                                                    .child(Text::String(recording_count.to_string().into())),
                                                                                             )
                                                                                             .child(
                                                                                                 div()
@@ -357,7 +367,7 @@ impl Render for BLiveApp {
                                                                                                     .font_semibold()
                                                                                                     .text_2xl()
                                                                                                     .text_color(gpui::rgb(0xef4444))
-                                                                                                    .child(Text::String("0".into())),
+                                                                                                    .child(Text::String(error_count.to_string().into())),
                                                                                             )
                                                                                             .child(
                                                                                                 div()
@@ -400,27 +410,27 @@ impl Render for BLiveApp {
                                                                                         .w_16()
                                                                                         .h_16()
                                                                                         .rounded_full()
-                                                                                        .bg(gpui::rgb(0x6b7280))
+                                                                                        .bg(cx.theme().accent)
                                                                                         .flex()
                                                                                         .justify_center()
                                                                                         .items_center()
                                                                                         .child(
                                                                                             div()
                                                                                                 .text_2xl()
-                                                                                                .text_color(gpui::rgb(0x6b7280))
+                                                                                                .text_color(cx.theme().accent_foreground)
                                                                                                 .child(Text::String("📺".into())),
                                                                                         ),
                                                                                 )
                                                                                 .child(
                                                                                     div()
                                                                                         .font_semibold()
-                                                                                        .text_color(gpui::rgb(0x374151))
+                                                                                        .text_color(cx.theme().accent_foreground)
                                                                                         .child(Text::String("暂无录制房间".into())),
                                                                                 )
                                                                                 .child(
                                                                                     div()
                                                                                         .text_sm()
-                                                                                        .text_color(gpui::rgb(0x9ca3af))
+                                                                                        .text_color(cx.theme().accent_foreground)
                                                                                         .child(Text::String("添加房间开始录制直播".into())),
                                                                                 ),
                                                                         ),

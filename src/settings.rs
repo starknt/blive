@@ -296,7 +296,7 @@ pub struct RoomSettings {
     pub format: Option<VideoContainer>,
     /// 录制编码
     pub codec: Option<StreamCodec>,
-    /// 录制名称 {up_name}_{room_id}_{datetime}
+    /// 录制名称 {up_name}_{room_title}_{datetime}
     pub record_name: String,
 }
 

@@ -112,28 +112,28 @@ fn main() {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
 
-        let _ = embed_resource::compile("resources/windows/manifest.rc", embed_resource::NONE);
+        // let _ = embed_resource::compile("resources/windows/manifest.rc", embed_resource::NONE);
 
-        // let icon = "resources/windows/icon.ico";
-        // let icon = std::path::Path::new(icon);
+        let icon = "resources/windows/icon.ico";
+        let icon = std::path::Path::new(icon);
 
-        // println!("cargo:rerun-if-changed={}", icon.display());
+        println!("cargo:rerun-if-changed={}", icon.display());
 
-        // let mut res = winresource::WindowsResource::new();
+        let mut res = winresource::WindowsResource::new();
 
-        // // Depending on the security applied to the computer, winresource might fail
-        // // fetching the RC path. Therefore, we add a way to explicitly specify the
-        // // toolkit path, allowing winresource to use a valid RC path.
-        // // if let Ok(explicit_rc_toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH") {
-        // //     res.set_toolkit_path(explicit_rc_toolkit_path.as_str());
-        // // }
-        // res.set_icon(icon.to_str().unwrap());
-        // res.set("FileDescription", "BLive");
-        // res.set("ProductName", "BLive");
-
-        // if let Err(e) = res.compile() {
-        //     eprintln!("{e}");
-        //     std::process::exit(1);
+        // Depending on the security applied to the computer, winresource might fail
+        // fetching the RC path. Therefore, we add a way to explicitly specify the
+        // toolkit path, allowing winresource to use a valid RC path.
+        // if let Ok(explicit_rc_toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH") {
+        //     res.set_toolkit_path(explicit_rc_toolkit_path.as_str());
         // }
+        res.set_icon(icon.to_str().unwrap());
+        res.set("FileDescription", "BLive");
+        res.set("ProductName", "BLive");
+
+        if let Err(e) = res.compile() {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
     }
 }

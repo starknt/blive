@@ -112,7 +112,7 @@ fn main() {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
 
-        embed_resource::compile("manifest.rc", embed_resource::NONE);
+        let _ = embed_resource::compile("resources/windows/manifest.rc", embed_resource::NONE);
 
         let icon = "resources/windows/icon.ico";
         let icon = std::path::Path::new(icon);

@@ -228,11 +228,30 @@ impl GlobalSettings {
         let settings_path = &SETTINGS_FILE;
         let settings_path: &str = settings_path.as_str();
         let path = Path::new(settings_path);
-        if path.exists()
+
+        // ensure the settings directory exists
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                if std::fs::create_dir_all(parent).is_ok() {
+                    log_user_action(
+                        "设置目录创建成功",
+                        Some(&format!("路径: {}", parent.display())),
+                    );
+                } else {
+                    log_user_action(
+                        "设置目录创建失败",
+                        Some(&format!("路径: {}", parent.display())),
+                    );
+                };
+            }
+        };
+
+        let mut settings = if path.exists()
             && let Ok(file_content) = std::fs::read_to_string(path)
         {
             if let Ok(settings) = serde_json::from_str::<GlobalSettings>(&file_content) {
                 log_user_action("设置文件加载成功", Some(&format!("路径: {settings_path}")));
+
                 return settings;
             }
 
@@ -240,14 +259,23 @@ impl GlobalSettings {
                 "设置文件解析失败，使用默认设置",
                 Some(&format!("路径: {settings_path}")),
             );
-            return GlobalSettings::default();
-        }
+
+            GlobalSettings::default()
+        } else {
+            GlobalSettings::default()
+        };
 
         log_user_action(
             "设置文件不存在，使用默认设置",
             Some(&format!("路径: {settings_path}")),
         );
-        GlobalSettings::default()
+
+        if settings.theme_name.is_empty() {
+            log_user_action("主题名称为空，使用默认主题", Some(DEFAULT_THEME));
+            settings.theme_name = DEFAULT_THEME.into();
+        }
+
+        settings
     }
 
     pub fn save(&self) {
@@ -256,6 +284,23 @@ impl GlobalSettings {
         let settings_path = &SETTINGS_FILE;
         let settings_path: &str = settings_path.as_str();
         let path = Path::new(&settings_path);
+
+        // ensure the settings directory exists
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                if std::fs::create_dir_all(parent).is_ok() {
+                    log_user_action(
+                        "设置目录创建成功",
+                        Some(&format!("路径: {}", parent.display())),
+                    );
+                } else {
+                    log_user_action(
+                        "设置目录创建失败",
+                        Some(&format!("路径: {}", parent.display())),
+                    );
+                };
+            }
+        };
 
         match serde_json::to_string_pretty(self) {
             Ok(json_str) => {

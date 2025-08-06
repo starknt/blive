@@ -136,7 +136,6 @@ pub enum DownloaderError {
     #[error("操作系统不支持: {operation} 在 {os} 上不可用")]
     UnsupportedOperation { operation: String, os: String },
 
-    // 通用错误（向后兼容）
     #[error("网络错误: {0}")]
     NetworkError(String),
 

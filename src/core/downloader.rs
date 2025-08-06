@@ -14,6 +14,7 @@ use crate::core::http_client::HttpClient;
 use crate::core::http_client::room::LiveRoomInfoData;
 use crate::core::http_client::stream::{LiveRoomStreamUrl, PlayStream};
 use crate::core::http_client::user::LiveUserInfo;
+use crate::log_user_action;
 use crate::settings::{DEFAULT_RECORD_NAME, LiveProtocol, Quality, StreamCodec, VideoContainer};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
@@ -154,6 +155,15 @@ impl BLiveDownloader {
 
         // 获取文件扩展名
         let ext = self.context.format.ext();
+
+        // 确保录制目录存在
+        if !std::path::Path::new(record_dir).exists() {
+            if std::fs::create_dir_all(record_dir).is_ok() {
+                log_user_action("录制目录创建成功", Some(&format!("路径: {}", record_dir)));
+            } else {
+                return Err(anyhow::anyhow!("无法创建录制目录: {}", record_dir));
+            }
+        }
 
         // 处理文件路径冲突
         let file_path = self.resolve_file_path(record_dir, &filename, ext)?;

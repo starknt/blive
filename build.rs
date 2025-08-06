@@ -111,6 +111,25 @@ fn main() {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
 
+        let env_iss = "resources/windows/env.iss";
+        let env_iss = std::path::Path::new(env_iss);
+        println!("cargo:rerun-if-changed={}", env_iss.display());
+        let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap();
+        std::fs::remove_file(env_iss)
+            .unwrap_or_else(|_| println!("No previous env.iss file found, creating a new one."));
+        // Generate the Inno Setup script, overwriting the env.iss file.
+        // This is used to set the application name and version dynamically.
+        std::fs::write(
+            env_iss,
+            format!(
+                r#"
+#define MyAppName "BLive"
+#define MyAppVersion "{pkg_version}"
+"#
+            ),
+        )
+        .expect("Failed to read env.iss");
+
         let icon = "resources/windows/icon.ico";
         let icon = std::path::Path::new(icon);
 

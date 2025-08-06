@@ -1,3 +1,5 @@
+#include "env.iss"
+
 [Setup]
 AppId=BLive
 AppName=BLive
@@ -5,7 +7,7 @@ AppPublisher=starknt
 AppPublisherURL=https://github.com/starknt
 AppSupportURL=https://github.com/starknt/BLive/issues
 AppUpdatesURL=https://github.com/starknt/BLive/releases
-AppVersion=1.0.0
+AppVersion={#MyAppVersion}
 DefaultDirName={autopf}\BLive
 DefaultGroupName=BLive
 UninstallDisplayIcon={app}\blive.exe
@@ -14,7 +16,7 @@ SolidCompression=yes
 SetupIconFile=icon.ico
 ChangesEnvironment=yes
 ChangesAssociations=yes
-OutputBaseFilename=BLive_1.0.0_Setup
+OutputBaseFilename=BLive_{#MyAppVersion}_Setup
 WizardStyle=modern
 CloseApplications=force
 OutputDir=..\..\target\release\bundle

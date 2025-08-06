@@ -11,6 +11,7 @@ pub mod settings;
 pub mod state;
 pub mod themes;
 pub mod title_bar;
+pub mod tray;
 
 pub use logger::{
     LogLevel, log_app_shutdown, log_app_start, log_config_change, log_network_request,

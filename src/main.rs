@@ -2,6 +2,7 @@
 
 use blive::logger::{init_logger, log_app_shutdown, log_app_start};
 use blive::settings::{APP_NAME, DISPLAY_NAME};
+use blive::tray::SystemTray;
 use blive::{app::BLiveApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
 use gpui::{
     App, Application, Bounds, KeyBinding, WindowBounds, WindowKind, WindowOptions, actions,
@@ -19,7 +20,6 @@ fn main() {
     log_app_start(env!("CARGO_PKG_VERSION"));
 
     let app = Application::new().with_assets(Assets);
-
     app.on_reopen(|cx| {
         open_main_window(cx);
     });
@@ -34,6 +34,10 @@ fn main() {
         theme::init(cx);
         ThemeSwitcher::init(cx);
         BLiveApp::init(cx);
+
+        if cfg!(target_os = "windows") {
+            let _system_tray = SystemTray::new(cx);
+        }
 
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
 

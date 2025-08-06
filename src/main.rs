@@ -15,7 +15,6 @@ use reqwest_client::ReqwestClient;
 actions!(menu, [Quit]);
 
 fn main() {
-    // 初始化日志系统 - 使用LazyLock简化初始化
     init_logger().expect("无法初始化日志系统");
     log_app_start(env!("CARGO_PKG_VERSION"));
 

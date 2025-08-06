@@ -2,6 +2,7 @@
 
 use blive::logger::{init_logger, log_app_shutdown, log_app_start};
 use blive::settings::{APP_NAME, DISPLAY_NAME};
+#[cfg(target_os = "windows")]
 use blive::tray::SystemTray;
 use blive::{app::BLiveApp, assets::Assets, state::AppState, themes::ThemeSwitcher};
 use gpui::{
@@ -35,9 +36,8 @@ fn main() {
         ThemeSwitcher::init(cx);
         BLiveApp::init(cx);
 
-        if cfg!(target_os = "windows") {
-            let _system_tray = SystemTray::new(cx);
-        }
+        #[cfg(target_os = "windows")]
+        let _system_tray = SystemTray::new(cx);
 
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
 

@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use blive::logger::{init_logger, log_app_shutdown, log_app_start};
 use blive::settings::{APP_NAME, DISPLAY_NAME};
 use blive::{app::BLiveApp, assets::Assets, state::AppState, themes::ThemeSwitcher};

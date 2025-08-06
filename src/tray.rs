@@ -1,65 +1,37 @@
-use gpui::App;
-use image::ImageReader;
-use tray_icon::{
-    Icon, TrayIcon, TrayIconBuilder,
-    menu::{Menu, MenuItem},
-};
+use tray_item::{IconSource, TrayItem};
 
-#[cfg(not(target_os = "windows"))]
-const ICON: &[u8] = include_bytes!("../resources/icons/png/64x64.png");
-
-#[cfg(target_os = "windows")]
-const ICON: &[u8] = include_bytes!("../resources/windows/icon.ico");
+pub enum TrayMessage {
+    OpenWindow,
+    Quit,
+}
 
 pub struct SystemTray {
-    tray: TrayIcon,
+    tray: TrayItem,
 }
 
 impl SystemTray {
-    pub fn new(cx: &mut App) -> Self {
-        let image = ImageReader::new(std::io::Cursor::new(ICON))
-            .with_guessed_format()
-            .unwrap()
-            .decode()
-            .unwrap()
-            .into_rgba8();
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        #[cfg(windows)]
+        let icon = IconSource::Resource("IDI_ICON_TRAY");
+        #[cfg(not(windows))]
+        let icon = IconSource::Data("IDI_ICON_TRAY");
 
-        let (width, height) = image.dimensions();
-        let rgba = image.into_raw();
+        let mut tray = TrayItem::new("Tray", icon).unwrap();
 
-        let menu = Menu::new();
-        let exit_item = MenuItem::new("退出", true, None);
-        let _ = menu.append_items(&[&exit_item]);
-
-        let tray = TrayIconBuilder::new()
-            .with_tooltip("BLive")
-            .with_icon(Icon::from_rgba(rgba, width, height).unwrap())
-            .with_menu(Box::new(menu))
-            .build()
-            .unwrap();
-
-        // 克隆 exit_item 的 ID 以避免 Send trait 问题
-        let exit_item_id = exit_item.id().clone();
-
-        cx.background_executor()
-            .spawn(async move {
-                while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
-                    if event.id() == &exit_item_id {
-                        println!("退出");
-                        break;
-                    }
-                }
-            })
-            .detach();
+        tray.inner_mut().set_tooltip("BLive 录制").unwrap();
 
         Self { tray }
     }
 
-    pub fn show(&self) {
-        let _ = self.tray.set_visible(true);
+    pub fn add_menu_item<F>(&mut self, label: &str, action: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.tray.add_menu_item(label, action).unwrap();
     }
 
-    pub fn hide(&self) {
-        let _ = self.tray.set_visible(false);
+    pub fn quit(&mut self) {
+        self.tray.inner_mut().quit();
     }
 }

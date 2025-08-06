@@ -1,4 +1,3 @@
-extern crate embed_resource;
 use ffmpeg_sidecar::{
     download::{check_latest_version, download_ffmpeg_package, ffmpeg_download_url, unpack_ffmpeg},
     version::ffmpeg_version_with_path,
@@ -112,8 +111,6 @@ fn main() {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
 
-        // let _ = embed_resource::compile("resources/windows/manifest.rc", embed_resource::NONE);
-
         let icon = "resources/windows/icon.ico";
         let icon = std::path::Path::new(icon);
 
@@ -121,12 +118,8 @@ fn main() {
 
         let mut res = winresource::WindowsResource::new();
 
-        // Depending on the security applied to the computer, winresource might fail
-        // fetching the RC path. Therefore, we add a way to explicitly specify the
-        // toolkit path, allowing winresource to use a valid RC path.
-        // if let Ok(explicit_rc_toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH") {
-        //     res.set_toolkit_path(explicit_rc_toolkit_path.as_str());
-        // }
+        res.set_icon_with_id(icon.to_str().unwrap(), "IDI_ICON_TRAY");
+        // res.set_manifest_file("resources/windows/app.exe.manifest");
         res.set_icon(icon.to_str().unwrap());
         res.set("FileDescription", "BLive");
         res.set("ProductName", "BLive");

@@ -28,9 +28,11 @@ strum = "0.27"
 reqwest_client = { git = "https://github.com/zed-industries/zed.git" }
 ffmpeg-sidecar = { version = "2", default-features = false, features = [] }
 image = { version = "0.25", features = ["png", "ico"] }
+tray-item = { version = "0.10" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-tray-icon = { version = "0.21", features = ["common-controls-v6"] }
+raw-window-handle = { version = "0.6" }
+windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
@@ -41,7 +43,6 @@ identifier = "com.starknt.blive"
 version = "0.1.0"
 
 [build-dependencies]
-embed-resource = "3.0"
 ffmpeg-sidecar = { version = "2", default-features = true, features = [] }
 
 [dev-dependencies]

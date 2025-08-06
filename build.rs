@@ -93,14 +93,14 @@ fn main() {
         let git_sha = String::from_utf8_lossy(&output.stdout);
         let git_sha = git_sha.trim();
 
-        println!("cargo:rustc-env=BLive_COMMIT_SHA={git_sha}");
+        println!("cargo:rustc-env=BLIVE_COMMIT_SHA={git_sha}");
 
         if let Ok(build_profile) = std::env::var("PROFILE")
             && build_profile == "release"
         {
             // This is currently the best way to make `cargo build ...`'s build script
             // to print something to stdout without extra verbosity.
-            println!("cargo:warning=Info: using '{git_sha}' hash for BLive_COMMIT_SHA env var");
+            println!("cargo:warning=Info: using '{git_sha}' hash for BLIVE_COMMIT_SHA env var");
         }
     }
 

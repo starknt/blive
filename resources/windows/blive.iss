@@ -11,7 +11,7 @@ DefaultGroupName=BLive
 UninstallDisplayIcon={app}\blive.exe
 Compression=lzma
 SolidCompression=yes
-SetupIconFile=resources\windows\icon.ico
+SetupIconFile=icon.ico
 ChangesEnvironment=yes
 ChangesAssociations=yes
 OutputBaseFilename=BLiveInstaller
@@ -23,15 +23,15 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 
 [Languages]
-Name: "simplifiedChinese"; MessagesFile: "resources\windows\messages\Default.zh-cn.isl,resources\windows\messages\zh-cn.isl";
+Name: "simplifiedChinese"; MessagesFile: "messages\Default.zh-cn.isl,messages\zh-cn.isl";
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："
 
 [Files]
-Source: "target\release\blive.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "resources\windows\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "resources\sidecar\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\target\release\blive.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\sidecar\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\BLive"; Filename: "{app}\blive.exe"

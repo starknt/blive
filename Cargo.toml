@@ -27,8 +27,10 @@ regex = "1"
 strum = "0.27"
 reqwest_client = { git = "https://github.com/zed-industries/zed.git" }
 ffmpeg-sidecar = { version = "2", default-features = false, features = [] }
-tray-icon = { version = "0.21", features = ["common-controls-v6"] }
 image = { version = "0.25", features = ["png", "ico"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tray-icon = { version = "0.21", features = ["common-controls-v6"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"

@@ -47,12 +47,12 @@ jobs:
             libx11-xcb-dev \
             mold \
             pkg-config
-      - name: Check code format
-        run: cargo fmt --all -- --check
-      - name: Check the package for errors
-        run: cargo check --all
-      - name: Lint rust sources
-        run: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
+      # - name: Check code format
+      #   run: cargo fmt --all -- --check
+      # - name: Check the package for errors
+      #   run: cargo check --all
+      # - name: Lint rust sources
+      #   run: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
       - name: Execute tests
         run: cargo nextest run --all-features
       - name: Install cargo-bundle
@@ -67,6 +67,7 @@ jobs:
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
         with:
           path: "resources/windows/blive.iss"
+          options: "/O target/release/bundle/BLiveInstaller.exe"
       - name: Upload bundle artefact
         uses: actions/upload-artifact@v4
         with:

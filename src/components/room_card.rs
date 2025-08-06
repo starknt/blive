@@ -16,7 +16,7 @@ use gpui::{
     prelude::*, px,
 };
 use gpui_component::{
-    ActiveTheme as _, StyledExt,
+    ActiveTheme as _, Disableable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
     text::Text,
@@ -378,6 +378,10 @@ impl Render for RoomCard {
                                             h_flex().flex_1().children(vec![
                                                 Button::new("record")
                                                     .primary()
+                                                    .disabled(!matches!(
+                                                        room_info.live_status,
+                                                        LiveStatus::Live
+                                                    ))
                                                     .label(match &self.status {
                                                         RoomCardStatus::Waiting => {
                                                             "开始录制".into()

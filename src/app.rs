@@ -171,6 +171,7 @@ impl Render for BLiveApp {
                 v_flex()
                     .scrollable(Axis::Vertical)
                     .size_full()
+                    .pb_6()
                     .child(
                         div()
                             .flex_1()
@@ -199,7 +200,7 @@ impl Render for BLiveApp {
                                                     )
                                                     .child(
                                                         div()
-                                                            .text_color(cx.theme().accent_foreground)
+                                                            .text_color(cx.theme().accent)
                                                             .child(Text::String("轻松录制B站直播，支持多房间同时录制".into())),
                                                     ),
                                             ),

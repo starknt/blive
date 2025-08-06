@@ -26,9 +26,10 @@ rand = { version = "0.9.2" }
 regex = "1"
 strum = "0.27"
 reqwest_client = { git = "https://github.com/zed-industries/zed.git" }
-ffmpeg-sidecar = { version = "2", default-features = false, features = [] }
+ffmpeg-sidecar = { version = "2" }
 image = { version = "0.25", features = ["png", "ico"] }
 tray-item = { version = "0.10" }
+flume = "0.11"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = { version = "0.6" }
@@ -47,7 +48,6 @@ ffmpeg-sidecar = { version = "2", default-features = true, features = [] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-ffmpeg-sidecar = { version = "2", default-features = true, features = [] }
 
 [profile.release]
 opt-level = 3

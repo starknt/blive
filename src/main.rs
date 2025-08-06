@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::mpsc;
 use std::time::Duration;
 
 use blive::logger::{init_logger, log_app_shutdown, log_app_start};
@@ -19,11 +18,14 @@ use reqwest_client::ReqwestClient;
 actions!(menu, [Quit]);
 
 fn main() {
+    #[cfg(debug_assertions)]
+    ffmpeg_sidecar::download::auto_download().expect("无法自动下载 ffmpeg");
+
     init_logger().expect("无法初始化日志系统");
     log_app_start(env!("CARGO_PKG_VERSION"));
 
     let quiting = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = flume::unbounded();
     let mut system_tray = SystemTray::new();
 
     let open_main_window_tx = tx.clone();
@@ -139,7 +141,7 @@ fn main() {
             break;
         }
 
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }
 
@@ -187,6 +189,7 @@ fn open_main_window(cx: &mut App) {
 
         window
             .update(cx, |_, window, _| {
+                window.set_window_title(DISPLAY_NAME);
                 window.activate_window();
             })
             .expect("Failed to update window");

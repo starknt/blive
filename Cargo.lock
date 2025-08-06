@@ -717,6 +717,7 @@ dependencies = [
  "chrono-tz",
  "directories",
  "ffmpeg-sidecar",
+ "flume",
  "futures",
  "gpui",
  "gpui-component",

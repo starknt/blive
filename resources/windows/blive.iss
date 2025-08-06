@@ -14,10 +14,10 @@ SolidCompression=yes
 SetupIconFile=icon.ico
 ChangesEnvironment=yes
 ChangesAssociations=yes
-OutputBaseFilename=BLiveInstaller
+OutputBaseFilename=BLive_1.0.0_Setup
 WizardStyle=modern
 CloseApplications=force
-
+OutputDir=..\..\target\release\bundle
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest

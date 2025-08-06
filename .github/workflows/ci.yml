@@ -67,18 +67,11 @@ jobs:
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
         with:
           path: "resources/windows/blive.iss"
-      - if: ${{ matrix.os != 'windows-latest' }}
-        name: Upload bundle artefact
+      - name: Upload bundle artefact
         uses: actions/upload-artifact@v4
         with:
           name: blive-${{ matrix.os }}
           path: target/release/bundle/
-      - if: ${{ matrix.os == 'windows-latest' }}
-        name: Upload bundle artefact
-        uses: actions/upload-artifact@v4
-        with:
-          name: blive-${{ matrix.os }}
-          path: resources/windows/Output/BLiveInstaller.exe
 
   autofix:
     runs-on: ubuntu-latest

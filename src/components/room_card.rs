@@ -250,6 +250,7 @@ impl RoomCard {
             global_setting.quality,
             global_setting.format,
             global_setting.codec,
+            global_setting.strategy,
             client,
             task_card.clone(),
         ));

@@ -14,7 +14,7 @@ use crate::{
         http_client::{room::LiveRoomInfoData, user::LiveUserInfo},
     },
     log_recording_error, log_recording_start, log_recording_stop,
-    settings::{Quality, StreamCodec, VideoContainer},
+    settings::{Quality, Strategy, StreamCodec, VideoContainer},
 };
 
 #[derive(Debug, Clone)]
@@ -33,11 +33,14 @@ pub struct DownloadConfig {
     pub format: VideoContainer,
     /// 画质
     pub quality: Quality,
+    /// 下载策略
+    pub strategy: Strategy,
 }
 
 impl Default for DownloadConfig {
     fn default() -> Self {
         Self {
+            strategy: Strategy::default(),
             output_path: "download".to_string(),
             overwrite: false,
             timeout: 30,
@@ -59,17 +62,20 @@ pub struct DownloaderContext {
     pub quality: Quality,
     pub format: VideoContainer,
     pub codec: StreamCodec,
+    pub strategy: Strategy,
     stats: Arc<Mutex<DownloadStats>>,
     is_running: Arc<atomic::AtomicBool>,
     event_queue: Arc<Mutex<VecDeque<DownloadEvent>>>,
 }
 
 impl DownloaderContext {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         entity: WeakEntity<RoomCard>,
         client: HttpClient,
         room_info: LiveRoomInfoData,
         user_info: LiveUserInfo,
+        strategy: Strategy,
         quality: Quality,
         format: VideoContainer,
         codec: StreamCodec,
@@ -80,6 +86,7 @@ impl DownloaderContext {
             client,
             room_info,
             user_info,
+            strategy,
             quality,
             format,
             codec,

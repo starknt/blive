@@ -15,7 +15,9 @@ use crate::core::http_client::room::LiveRoomInfoData;
 use crate::core::http_client::stream::{LiveRoomStreamUrl, PlayStream};
 use crate::core::http_client::user::LiveUserInfo;
 use crate::log_user_action;
-use crate::settings::{DEFAULT_RECORD_NAME, LiveProtocol, Quality, StreamCodec, VideoContainer};
+use crate::settings::{
+    DEFAULT_RECORD_NAME, LiveProtocol, Quality, Strategy, StreamCodec, VideoContainer,
+};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
@@ -73,8 +75,8 @@ pub enum DownloadStatus {
 }
 
 pub enum DownloaderType {
-    HttpStream(HttpStreamDownloader),
-    HttpHls(HttpHlsDownloader),
+    HttpStream(Option<HttpStreamDownloader>),
+    HttpHls(Option<HttpHlsDownloader>),
 }
 
 pub struct BLiveDownloader {
@@ -148,13 +150,13 @@ impl BLiveDownloader {
         let stream_info = self.get_stream_info().await?;
 
         // 解析下载URL和选择下载器类型
-        let (url, downloader_type) = self.parse_stream_url(&stream_info)?;
+        let (url, downloader_type, format, codec) = self.parse_stream_url(&stream_info)?;
 
         // 生成文件名
         let filename = self.generate_filename()?;
 
         // 获取文件扩展名
-        let ext = self.context.format.ext();
+        let ext = format.ext();
 
         // 确保录制目录存在
         if !std::path::Path::new(record_dir).exists() {
@@ -173,9 +175,10 @@ impl BLiveDownloader {
             overwrite: false,
             timeout: 30,
             retry_count: 3,
-            codec: self.context.codec,
-            format: self.context.format,
+            codec,
+            format,
             quality: self.context.quality,
+            strategy: self.context.strategy,
         };
 
         // 根据下载器类型创建具体的下载器
@@ -183,17 +186,17 @@ impl BLiveDownloader {
             DownloaderType::HttpStream(_) => {
                 let downloader = HttpStreamDownloader::new(url, config, self.context.clone());
 
-                DownloaderType::HttpStream(downloader)
+                DownloaderType::HttpStream(Some(downloader))
             }
             DownloaderType::HttpHls(_) => {
                 let downloader = HttpHlsDownloader::new(url, config, self.context.clone());
 
-                DownloaderType::HttpHls(downloader)
+                DownloaderType::HttpHls(Some(downloader))
             }
         };
 
         match &mut final_downloader {
-            DownloaderType::HttpStream(downloader) => match downloader.start(cx) {
+            DownloaderType::HttpStream(Some(downloader)) => match downloader.start(cx) {
                 Ok(_) => {
                     // 设置运行状态
                     self.context.set_running(true);
@@ -205,7 +208,7 @@ impl BLiveDownloader {
                     return Err(e);
                 }
             },
-            DownloaderType::HttpHls(downloader) => match downloader.start(cx) {
+            DownloaderType::HttpHls(Some(downloader)) => match downloader.start(cx) {
                 Ok(_) => {
                     // 设置运行状态
                     self.context.set_running(true);
@@ -217,6 +220,9 @@ impl BLiveDownloader {
                     return Err(e);
                 }
             },
+            DownloaderType::HttpHls(None) | DownloaderType::HttpStream(None) => {
+                return Err(anyhow::anyhow!("未能创建下载器"));
+            }
         }
 
         self.downloader.lock().unwrap().replace(final_downloader);
@@ -345,10 +351,14 @@ impl BLiveDownloader {
             if let Some(ref mut downloader) = downloader_guard.as_mut() {
                 match downloader {
                     DownloaderType::HttpStream(downloader) => {
-                        let _ = downloader.stop().await;
+                        if let Some(downloader) = downloader {
+                            let _ = downloader.stop().await;
+                        }
                     }
                     DownloaderType::HttpHls(downloader) => {
-                        let _ = downloader.stop().await;
+                        if let Some(downloader) = downloader {
+                            let _ = downloader.stop().await;
+                        }
                     }
                 }
             }
@@ -440,17 +450,20 @@ impl BLiveDownloader {
 }
 
 impl BLiveDownloader {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         room_info: LiveRoomInfoData,
         user_info: LiveUserInfo,
         quality: Quality,
         format: VideoContainer,
         codec: StreamCodec,
+        strategy: Strategy,
         client: HttpClient,
         entity: WeakEntity<RoomCard>,
     ) -> Self {
-        let context: DownloaderContext =
-            DownloaderContext::new(entity, client, room_info, user_info, quality, format, codec);
+        let context: DownloaderContext = DownloaderContext::new(
+            entity, client, room_info, user_info, strategy, quality, format, codec,
+        );
 
         let reconnect_manager = ReconnectManager::new(
             u32::MAX,                     // 无限重试
@@ -591,36 +604,64 @@ impl BLiveDownloader {
     fn parse_stream_url(
         &self,
         stream_info: &LiveRoomStreamUrl,
-    ) -> Result<(String, DownloaderType)> {
+    ) -> Result<(String, DownloaderType, VideoContainer, StreamCodec)> {
         let playurl_info = stream_info
             .playurl_info
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("未找到播放信息"))?;
 
-        // 优先尝试http_hls协议
-        if let Some(stream) = playurl_info
-            .playurl
-            .stream
-            .iter()
-            .find(|stream| stream.protocol_name == LiveProtocol::default())
-        {
-            return self.parse_hls_stream(stream);
-        }
+        match self.context.strategy {
+            Strategy::LowCost => {
+                // 优先尝试http_stream协议
+                if let Some(stream) = playurl_info
+                    .playurl
+                    .stream
+                    .iter()
+                    .find(|stream| stream.protocol_name == LiveProtocol::HttpStream)
+                {
+                    return self.parse_http_stream(stream);
+                }
 
-        // 如果没有http_hls，尝试http_stream协议
-        if let Some(stream) = playurl_info
-            .playurl
-            .stream
-            .iter()
-            .find(|stream| stream.protocol_name == LiveProtocol::HttpStream)
-        {
-            return self.parse_http_stream(stream);
+                // 如果没有http_stream，尝试http_hls协议
+                if let Some(stream) = playurl_info
+                    .playurl
+                    .stream
+                    .iter()
+                    .find(|stream| stream.protocol_name == LiveProtocol::default())
+                {
+                    return self.parse_http_stream(stream);
+                }
+            }
+            Strategy::PriorityConfig => {
+                // 优先尝试http_hls协议
+                if let Some(stream) = playurl_info
+                    .playurl
+                    .stream
+                    .iter()
+                    .find(|stream| stream.protocol_name == LiveProtocol::default())
+                {
+                    return self.parse_hls_stream(stream);
+                }
+
+                // 如果没有http_hls，尝试http_stream协议
+                if let Some(stream) = playurl_info
+                    .playurl
+                    .stream
+                    .iter()
+                    .find(|stream| stream.protocol_name == LiveProtocol::HttpStream)
+                {
+                    return self.parse_http_stream(stream);
+                }
+            }
         }
 
         anyhow::bail!("未找到合适的直播流协议");
     }
 
-    fn parse_http_stream(&self, stream: &PlayStream) -> Result<(String, DownloaderType)> {
+    fn parse_http_stream(
+        &self,
+        stream: &PlayStream,
+    ) -> Result<(String, DownloaderType, VideoContainer, StreamCodec)> {
         if stream.format.is_empty() {
             anyhow::bail!("未找到合适的直播流");
         }
@@ -648,21 +689,18 @@ impl BLiveDownloader {
         let url_info = &codec.url_info[rand::rng().random_range(0..codec.url_info.len())];
         let url = format!("{}{}{}", url_info.host, codec.base_url, url_info.extra);
 
-        let config = DownloadConfig {
-            output_path: String::new(), // 将在start_download中设置
-            overwrite: false,
-            timeout: 30,
-            retry_count: 3,
-            codec: self.context.codec,
-            format: self.context.format,
-            quality: self.context.quality,
-        };
-        let http_downloader = HttpStreamDownloader::new(url.clone(), config, self.context.clone());
-
-        Ok((url, DownloaderType::HttpStream(http_downloader)))
+        Ok((
+            url,
+            DownloaderType::HttpStream(None),
+            format_stream.format_name,
+            codec.codec_name,
+        ))
     }
 
-    fn parse_hls_stream(&self, stream: &PlayStream) -> Result<(String, DownloaderType)> {
+    fn parse_hls_stream(
+        &self,
+        stream: &PlayStream,
+    ) -> Result<(String, DownloaderType, VideoContainer, StreamCodec)> {
         if stream.format.is_empty() {
             anyhow::bail!("未找到合适的HLS流");
         }
@@ -690,19 +728,12 @@ impl BLiveDownloader {
         let url_info = &codec.url_info[rand::rng().random_range(0..codec.url_info.len())];
         let url = format!("{}{}{}", url_info.host, codec.base_url, url_info.extra);
 
-        // 创建HttpHlsDownloader
-        let config = DownloadConfig {
-            output_path: String::new(), // 将在start_download中设置
-            overwrite: false,
-            timeout: 30,
-            retry_count: 3,
-            codec: self.context.codec,
-            format: self.context.format,
-            quality: self.context.quality,
-        };
-        let hls_downloader = HttpHlsDownloader::new(url.clone(), config, self.context.clone());
-
-        Ok((url, DownloaderType::HttpHls(hls_downloader)))
+        Ok((
+            url,
+            DownloaderType::HttpHls(None),
+            format_stream.format_name,
+            codec.codec_name,
+        ))
     }
 
     fn generate_filename(&self) -> Result<String> {

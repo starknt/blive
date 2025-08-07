@@ -46,8 +46,7 @@ impl SettingsModal {
         let strategy_input = cx.new(|cx| {
             let mut state = DropdownState::new(
                 vec![
-                    Strategy::LowCPU.to_string(),
-                    Strategy::LowDisk.to_string(),
+                    Strategy::LowCost.to_string(),
                     Strategy::PriorityConfig.to_string(),
                 ],
                 Some(0),

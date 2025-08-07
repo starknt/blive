@@ -55,15 +55,11 @@ static DEFAULT_RECORD_DIR: LazyLock<String> = LazyLock::new(|| {
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
 pub enum Strategy {
     // 优化CPU占用
-    #[serde(rename = "优化CPU占用")]
-    #[strum(serialize = "优化CPU占用")]
-    LowCPU,
-    // 优化硬盘占用
-    #[serde(rename = "优化硬盘占用")]
-    #[strum(serialize = "优化硬盘占用")]
-    LowDisk,
-    // 配置优先
     #[default]
+    #[serde(rename = "低占用")]
+    #[strum(serialize = "低占用")]
+    LowCost,
+    // 配置优先
     #[serde(rename = "配置优先")]
     #[strum(serialize = "配置优先")]
     PriorityConfig,
@@ -72,8 +68,7 @@ pub enum Strategy {
 impl fmt::Display for Strategy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Strategy::LowCPU => write!(f, "优化CPU占用"),
-            Strategy::LowDisk => write!(f, "优化硬盘占用"),
+            Strategy::LowCost => write!(f, "低占用"),
             Strategy::PriorityConfig => write!(f, "配置优先"),
         }
     }

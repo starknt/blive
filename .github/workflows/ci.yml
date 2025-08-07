@@ -13,8 +13,8 @@ jobs:
       fail-fast: true
       matrix:
         os:
-          - macos
-          - windows
+          - macos-latest
+          - windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - name: CheckOut

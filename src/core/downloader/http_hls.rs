@@ -46,7 +46,7 @@ impl HttpHlsDownloader {
             .args(["-bsf:a", "aac_adtstoasc"])
             .arg("-c:v")
             .arg(match config.codec {
-                StreamCodec::AVC => "copy",
+                StreamCodec::AVC => "libx264",
                 StreamCodec::HEVC => "hevc",
             })
             .arg(config.output_path.clone());

@@ -112,7 +112,7 @@ fn main() {
                                     if let Some(window) = cx.windows().first() {
                                         window
                                             .update(cx, |_, window, _| {
-                                                #[cfg(windows)] {
+                                                #[cfg(target_os = "windows")] {
                                                     unsafe  {
                                                         use windows::Win32::Foundation::*;
                                                         use raw_window_handle::HasWindowHandle;
@@ -126,6 +126,8 @@ fn main() {
 
                                                     }
                                                 }
+
+                                                window.activate_window();
                                             })
                                             .expect("Failed to activate window");
                                     }
@@ -183,10 +185,13 @@ fn open_main_window(cx: &mut App) {
             .open_window(options, |window, cx| {
                 let root = BLiveApp::view(DISPLAY_NAME.into(), window, cx);
 
-                window.on_window_should_close(cx, |w, _| {
-                    w.minimize_window();
+                window.on_window_should_close(cx, |window, _| {
+                    #[cfg(target_os = "windows")]
+                    window.minimize_window();
+                    #[cfg(target_os = "macos")]
+                    window.blur();
 
-                    false
+                    !cfg!(windows)
                 });
 
                 cx.new(|cx| Root::new(root.into(), window, cx))

@@ -49,8 +49,8 @@ impl HttpStreamDownloader {
             .args(["-bsf:a", "aac_adtstoasc"])
             .arg("-c:v")
             .arg(match config.codec {
-                StreamCodec::AVC => "copy",
-                StreamCodec::HEVC => "copy",
+                StreamCodec::AVC => "libx264",
+                StreamCodec::HEVC => "hevc",
             })
             .arg(config.output_path.clone());
 
@@ -171,7 +171,7 @@ impl Downloader for HttpStreamDownloader {
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!("无法创建输出文件: {}", e);
+                                        eprintln!("无法创建输出文件: {e}");
                                         context.push_event(DownloadEvent::Error {
                                             error: DownloaderError::FileCreationFailed {
                                                 path: config.output_path,
@@ -184,8 +184,7 @@ impl Downloader for HttpStreamDownloader {
                             Err(e) => {
                                 context.push_event(DownloadEvent::Error {
                                     error: DownloaderError::NetworkError(format!(
-                                        "HTTP请求失败: {}",
-                                        e
+                                        "HTTP请求失败: {e}"
                                     )),
                                 });
                             }

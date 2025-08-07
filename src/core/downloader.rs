@@ -162,7 +162,7 @@ impl BLiveDownloader {
         // 确保录制目录存在
         if !std::path::Path::new(record_dir).exists() {
             if std::fs::create_dir_all(record_dir).is_ok() {
-                log_user_action("录制目录创建成功", Some(&format!("路径: {}", record_dir)));
+                log_user_action("录制目录创建成功", Some(&format!("路径: {record_dir}")));
             } else {
                 return Err(anyhow::anyhow!("无法创建录制目录: {}", record_dir));
             }

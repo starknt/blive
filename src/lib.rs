@@ -11,8 +11,6 @@ pub mod settings;
 pub mod state;
 pub mod themes;
 pub mod title_bar;
-
-#[cfg(target_os = "windows")]
 pub mod tray;
 
 pub use logger::{

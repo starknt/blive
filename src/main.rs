@@ -141,14 +141,14 @@ fn main() {
         .detach();
     });
 
-    // loop {
-    //     if quiting.load(std::sync::atomic::Ordering::Relaxed) {
-    //         system_tray.quit();
-    //         break;
-    //     }
+    loop {
+        if quiting.load(std::sync::atomic::Ordering::Relaxed) {
+            system_tray.quit();
+            break;
+        }
 
-    //     std::thread::sleep(std::time::Duration::from_secs(3));
-    // }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
 }
 
 fn open_main_window(cx: &mut App) {
@@ -183,11 +183,11 @@ fn open_main_window(cx: &mut App) {
             .open_window(options, |window, cx| {
                 let root = BLiveApp::view(DISPLAY_NAME.into(), window, cx);
 
-                // window.on_window_should_close(cx, |w, _| {
-                //     w.minimize_window();
+                window.on_window_should_close(cx, |w, _| {
+                    w.minimize_window();
 
-                //     false
-                // });
+                    false
+                });
 
                 cx.new(|cx| Root::new(root.into(), window, cx))
             })

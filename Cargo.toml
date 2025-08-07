@@ -40,9 +40,14 @@ windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_UI_Window
 winresource = "0.1"
 
 [package.metadata.bundle]
-name = "直播录制"
+name = "BLive"
 identifier = "com.starknt.blive"
-version = "0.1.0"
+icon = ["resources/mac/icon.icns"]
+resources = ["resources/sidecar/ffmpeg"]
+copyright = "Copyright © 2025 starknt. All rights reserved."
+category = "Developer Tool"
+short_description = "BLive is a tool for recording live streams."
+long_description = "BLive is a tool for recording live streams."
 
 [build-dependencies]
 ffmpeg-sidecar = { version = "2", default-features = true, features = [] }

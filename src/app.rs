@@ -24,7 +24,6 @@ pub struct BLiveApp {
 }
 
 impl BLiveApp {
-    /// 初始化应用
     pub fn init(cx: &mut App) {
         log_user_action("初始化主应用组件", None);
 

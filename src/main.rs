@@ -30,13 +30,11 @@ fn main() {
 
     let open_main_window_tx = tx.clone();
     system_tray.add_menu_item("打开主窗口", move || {
-        // This can be used to open the main application window
         open_main_window_tx.send(TrayMessage::OpenWindow).unwrap();
     });
 
     let quit_app_tx = tx.clone();
     system_tray.add_menu_item("退出应用", move || {
-        // Send a quit message to the application
         quit_app_tx.send(TrayMessage::Quit).unwrap();
     });
 
@@ -72,7 +70,6 @@ fn main() {
 
             let app_quitting = app_quitting.clone();
             async move {
-                // Wait for all downloaders to stop
                 futures::future::join_all(downloaders.iter().map(|downloader| downloader.stop())).await;
 
                 // 记录应用关闭日志
@@ -105,32 +102,28 @@ fn main() {
                         TrayMessage::OpenWindow => {
                             let _ = cx.update(|cx| {
                                 if cx.windows().is_empty() {
-                                    // open main window
                                     open_main_window(cx);
-                                } else {
-                                    // If the main window is already open, just activate it
-                                    if let Some(window) = cx.windows().first() {
-                                        window
-                                            .update(cx, |_, window, _| {
-                                                #[cfg(target_os = "windows")] {
-                                                    unsafe  {
-                                                        use windows::Win32::Foundation::*;
-                                                        use raw_window_handle::HasWindowHandle;
-                                                        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_RESTORE};
+                                } else if let Some(window) = cx.windows().first() {
+                                    window
+                                        .update(cx, |_, window, _| {
+                                            #[cfg(target_os = "windows")] {
+                                                unsafe  {
+                                                    use windows::Win32::Foundation::*;
+                                                    use raw_window_handle::HasWindowHandle;
+                                                    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_RESTORE};
 
-                                                        if let Ok(handle) = window.window_handle()
-                                                            && let raw_window_handle::RawWindowHandle::Win32(handle) = handle.as_raw() {
-                                                                // If the window is minimized, restore it
-                                                                let _ = ShowWindow(HWND(handle.hwnd.get() as *mut std::ffi::c_void), SW_RESTORE);
-                                                            }
+                                                    if let Ok(handle) = window.window_handle()
+                                                        && let raw_window_handle::RawWindowHandle::Win32(handle) = handle.as_raw() {
+                                                            // If the window is minimized, restore it
+                                                            let _ = ShowWindow(HWND(handle.hwnd.get() as *mut std::ffi::c_void), SW_RESTORE);
+                                                        }
 
-                                                    }
                                                 }
+                                            }
 
-                                                window.activate_window();
-                                            })
-                                            .expect("Failed to activate window");
-                                    }
+                                            window.activate_window();
+                                        })
+                                        .expect("Failed to activate window");
                                 }
                             });
                         }

@@ -1,10 +1,11 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, atomic},
+    sync::{Arc, atomic},
     time::Duration,
 };
 
 use gpui::{AsyncApp, WeakEntity};
+use try_lock::TryLock;
 
 use crate::{
     components::{RoomCard, RoomCardStatus},
@@ -54,7 +55,7 @@ impl Default for DownloadConfig {
 
 #[derive(Clone)]
 pub struct DownloaderContext {
-    status: Arc<Mutex<DownloadStatus>>,
+    status: Arc<TryLock<DownloadStatus>>,
     pub entity: WeakEntity<RoomCard>,
     pub client: HttpClient,
     pub room_info: LiveRoomInfoData,
@@ -63,9 +64,9 @@ pub struct DownloaderContext {
     pub format: VideoContainer,
     pub codec: StreamCodec,
     pub strategy: Strategy,
-    stats: Arc<Mutex<DownloadStats>>,
+    stats: Arc<TryLock<DownloadStats>>,
     is_running: Arc<atomic::AtomicBool>,
-    event_queue: Arc<Mutex<VecDeque<DownloadEvent>>>,
+    event_queue: Arc<TryLock<VecDeque<DownloadEvent>>>,
 }
 
 impl DownloaderContext {
@@ -81,7 +82,7 @@ impl DownloaderContext {
         codec: StreamCodec,
     ) -> Self {
         Self {
-            status: Arc::new(Mutex::new(DownloadStatus::NotStarted)),
+            status: Arc::new(TryLock::new(DownloadStatus::NotStarted)),
             entity,
             client,
             room_info,
@@ -90,28 +91,28 @@ impl DownloaderContext {
             quality,
             format,
             codec,
-            stats: Arc::new(std::sync::Mutex::new(DownloadStats::default())),
-            is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            event_queue: Arc::new(std::sync::Mutex::new(VecDeque::new())),
+            stats: Arc::new(TryLock::new(DownloadStats::default())),
+            is_running: Arc::new(atomic::AtomicBool::new(false)),
+            event_queue: Arc::new(TryLock::new(VecDeque::new())),
         }
     }
 
     pub fn init(&self) {
-        self.stats.lock().unwrap().reset();
+        self.stats.try_lock().unwrap().reset();
         self.is_running
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        self.event_queue.lock().unwrap().clear();
+        self.event_queue.try_lock().unwrap().clear();
         self.set_status(DownloadStatus::NotStarted);
     }
 
     pub fn set_status(&self, status: DownloadStatus) {
-        if let Ok(mut status_guard) = self.status.lock() {
+        if let Some(mut status_guard) = self.status.try_lock() {
             *status_guard = status;
         }
     }
 
     pub fn get_status(&self) -> DownloadStatus {
-        self.status.lock().unwrap().clone()
+        self.status.try_lock().unwrap().clone()
     }
 
     pub fn update_card_status(&self, cx: &mut AsyncApp, status: RoomCardStatus) {
@@ -125,7 +126,7 @@ impl DownloaderContext {
 
     /// 推送事件到队列
     pub fn push_event(&self, event: DownloadEvent) {
-        if let Ok(mut queue) = self.event_queue.lock() {
+        if let Some(mut queue) = self.event_queue.try_lock() {
             queue.push_back(event);
         }
     }
@@ -134,7 +135,7 @@ impl DownloaderContext {
     pub fn process_events(&self, cx: &mut AsyncApp) -> usize {
         let mut processed = 0;
 
-        if let Ok(mut queue) = self.event_queue.lock() {
+        if let Some(mut queue) = self.event_queue.try_lock() {
             while let Some(event) = queue.pop_front() {
                 self.handle_event(cx, event);
                 processed += 1;
@@ -319,7 +320,7 @@ impl DownloaderContext {
     where
         F: FnOnce(&mut DownloadStats),
     {
-        if let Ok(mut stats) = self.stats.lock() {
+        if let Some(mut stats) = self.stats.try_lock() {
             updater(&mut stats);
         }
     }
@@ -327,9 +328,9 @@ impl DownloaderContext {
     /// 获取统计信息
     pub fn get_stats(&self) -> DownloadStats {
         self.stats
-            .lock()
+            .try_lock()
             .map(|guard| guard.clone())
-            .unwrap_or_else(|_| {
+            .unwrap_or_else(|| {
                 eprintln!("无法获取统计信息锁");
                 DownloadStats::default()
             })

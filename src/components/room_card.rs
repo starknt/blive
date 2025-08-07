@@ -140,13 +140,27 @@ impl RoomCard {
             RoomCardEvent::StartRecording => {
                 this.update(cx, |this, cx| {
                     this.user_stop = false;
+
+                    match this.room_info.live_status {
+                        LiveStatus::Live => {
+                            if this.status != RoomCardStatus::Waiting {
+                                // 如果已经在录制中，则不重复开始
+                                return;
+                            }
+
+                            this.status = RoomCardStatus::Recording(0.0);
+                            cx.emit(RoomCardEvent::StatusChanged(this.status.clone()));
+                        }
+                        _ => {
+                            this.status = RoomCardStatus::Error("房间未开播".to_string());
+                        }
+                    }
+
                     cx.notify();
                 });
             }
             RoomCardEvent::StopRecording => {
                 this.update(cx, |this, cx| {
-                    this.status = RoomCardStatus::Waiting;
-
                     let downloader = this.downloader.take();
                     if downloader.is_some() {
                         cx.foreground_executor()
@@ -164,6 +178,7 @@ impl RoomCard {
                         });
                     }
 
+                    this.status = RoomCardStatus::Waiting;
                     this.user_stop = true;
                     cx.notify();
                 });
@@ -408,7 +423,7 @@ impl Render for RoomCard {
                                                     })
                                                     .on_click(cx.listener(|card, _, _, cx| {
                                                         let room_id = card.settings.room_id;
-                                                        let new_status = match &card.status {
+                                                        match &card.status {
                                                             RoomCardStatus::Waiting => {
                                                                 log_user_action(
                                                                     "开始录制",
@@ -419,7 +434,6 @@ impl Render for RoomCard {
                                                                 cx.emit(
                                                                     RoomCardEvent::StartRecording,
                                                                 );
-                                                                RoomCardStatus::Recording(0.0)
                                                             }
                                                             RoomCardStatus::Recording(_) => {
                                                                 log_user_action(
@@ -431,7 +445,6 @@ impl Render for RoomCard {
                                                                 cx.emit(
                                                                     RoomCardEvent::StopRecording,
                                                                 );
-                                                                RoomCardStatus::Waiting
                                                             }
                                                             RoomCardStatus::Error(_) => {
                                                                 log_user_action(
@@ -440,10 +453,8 @@ impl Render for RoomCard {
                                                                         "房间号: {room_id}"
                                                                     )),
                                                                 );
-                                                                RoomCardStatus::Waiting
                                                             }
                                                         };
-                                                        card.status = new_status.clone();
                                                         cx.notify();
                                                     })),
                                             ])

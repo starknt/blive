@@ -30,6 +30,7 @@ ffmpeg-sidecar = { version = "2" }
 image = { version = "0.25", features = ["png", "ico"] }
 tray-item = { version = "0.10" }
 flume = "0.11"
+try-lock = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = { version = "0.6" }

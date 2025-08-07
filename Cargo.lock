@@ -739,6 +739,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tray-item",
+ "try-lock",
  "windows 0.61.3",
  "winresource",
 ]

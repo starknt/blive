@@ -27,6 +27,7 @@ use rand::Rng;
 pub use stats::DownloadStats;
 use std::sync::Mutex;
 use std::time::Duration;
+use try_lock::TryLock;
 
 pub const REFERER: &str = "https://live.bilibili.com/";
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -82,10 +83,10 @@ pub enum DownloaderType {
 pub struct BLiveDownloader {
     pub context: DownloaderContext,
     downloader: Mutex<Option<DownloaderType>>,
-    max_reconnect_attempts: Mutex<u32>,
-    reconnect_delay: Mutex<Duration>,
-    is_auto_reconnect: Mutex<bool>,
-    reconnect_manager: Mutex<ReconnectManager>,
+    max_reconnect_attempts: TryLock<u32>,
+    reconnect_delay: TryLock<Duration>,
+    is_auto_reconnect: TryLock<bool>,
+    reconnect_manager: TryLock<ReconnectManager>,
 }
 
 #[derive(Debug)]
@@ -225,14 +226,17 @@ impl BLiveDownloader {
             }
         }
 
-        self.downloader.lock().unwrap().replace(final_downloader);
+        self.downloader
+            .try_lock()
+            .unwrap()
+            .replace(final_downloader);
 
         Ok(())
     }
 
     /// 统一的重连方法
     async fn attempt_reconnect(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
-        let mut manager = self.reconnect_manager.lock().unwrap();
+        let mut manager = self.reconnect_manager.try_lock().unwrap();
 
         if !manager.should_reconnect() {
             return Err(anyhow::anyhow!("已达到最大重连次数"));
@@ -273,7 +277,7 @@ impl BLiveDownloader {
         match self.start_download(cx, record_dir).await {
             Ok(_) => {
                 // 重连成功，重置计数器
-                let mut manager = self.reconnect_manager.lock().unwrap();
+                let mut manager = self.reconnect_manager.try_lock().unwrap();
                 manager.reset_attempts();
 
                 eprintln!("✅ 重连成功！");
@@ -282,7 +286,7 @@ impl BLiveDownloader {
             }
             Err(e) => {
                 // 重连失败，记录错误
-                let mut manager = self.reconnect_manager.lock().unwrap();
+                let mut manager = self.reconnect_manager.try_lock().unwrap();
                 manager.set_error(e.to_string());
 
                 eprintln!("❌ 重连失败: {e}");
@@ -295,7 +299,7 @@ impl BLiveDownloader {
     pub async fn start(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
         // 重置重连管理器
         {
-            let mut manager = self.reconnect_manager.lock().unwrap();
+            let mut manager = self.reconnect_manager.try_lock().unwrap();
             manager.current_attempt = 0;
             manager.consecutive_successes = 0;
         }
@@ -474,10 +478,10 @@ impl BLiveDownloader {
         Self {
             context,
             downloader: Mutex::new(None),
-            max_reconnect_attempts: Mutex::new(u32::MAX),
-            reconnect_delay: Mutex::new(Duration::from_secs(1)),
-            is_auto_reconnect: Mutex::new(true),
-            reconnect_manager: Mutex::new(reconnect_manager),
+            max_reconnect_attempts: TryLock::new(u32::MAX),
+            reconnect_delay: TryLock::new(Duration::from_secs(1)),
+            is_auto_reconnect: TryLock::new(true),
+            reconnect_manager: TryLock::new(reconnect_manager),
         }
     }
 
@@ -486,7 +490,7 @@ impl BLiveDownloader {
     }
 
     fn is_auto_reconnect(&self) -> bool {
-        *self.is_auto_reconnect.lock().unwrap()
+        *self.is_auto_reconnect.try_lock().unwrap()
     }
 
     /// 改进的网络错误检测
@@ -543,10 +547,10 @@ impl BLiveDownloader {
         max_delay: Duration,
         auto_reconnect: bool,
     ) {
-        let mut max_reconnect_attempts = self.max_reconnect_attempts.lock().unwrap();
-        let mut reconnect_delay = self.reconnect_delay.lock().unwrap();
-        let mut is_auto_reconnect = self.is_auto_reconnect.lock().unwrap();
-        let mut reconnect_manager = self.reconnect_manager.lock().unwrap();
+        let mut max_reconnect_attempts = self.max_reconnect_attempts.try_lock().unwrap();
+        let mut reconnect_delay = self.reconnect_delay.try_lock().unwrap();
+        let mut is_auto_reconnect = self.is_auto_reconnect.try_lock().unwrap();
+        let mut reconnect_manager = self.reconnect_manager.try_lock().unwrap();
 
         *max_reconnect_attempts = max_attempts;
         *reconnect_delay = initial_delay;
@@ -560,7 +564,7 @@ impl BLiveDownloader {
 
     /// 获取重连统计信息
     pub fn get_reconnect_stats(&self) -> (u32, u32, Option<String>) {
-        let manager = self.reconnect_manager.lock().unwrap();
+        let manager = self.reconnect_manager.try_lock().unwrap();
         (
             manager.current_attempt,
             manager.consecutive_successes,
@@ -586,7 +590,7 @@ impl BLiveDownloader {
                 Err(e) => {
                     retry_count += 1;
                     let delay = {
-                        let manager = self.reconnect_manager.lock().unwrap();
+                        let manager = self.reconnect_manager.try_lock().unwrap();
                         manager.calculate_delay()
                     };
 

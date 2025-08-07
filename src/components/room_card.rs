@@ -30,6 +30,7 @@ enum RoomCardEvent {
     StatusChanged(RoomCardStatus),
     StartRecording,
     StopRecording,
+    WillDeleted(u64),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -62,14 +63,9 @@ pub struct RoomCard {
 }
 
 impl RoomCard {
-    fn new(
-        room: LiveRoomInfoData,
-        user: LiveUserInfo,
-        settings: RoomSettings,
-        subscription: Subscription,
-    ) -> Self {
+    fn new(room: LiveRoomInfoData, user: LiveUserInfo, settings: RoomSettings) -> Self {
         Self {
-            _subscriptions: vec![subscription],
+            _subscriptions: vec![],
             status: match room.live_status {
                 LiveStatus::Live => RoomCardStatus::Recording(0.0),
                 _ => RoomCardStatus::Waiting,
@@ -114,17 +110,7 @@ impl RoomCard {
             })
             .detach();
 
-            let subscription = cx.on_app_quit(|card, _cx| {
-                let downloader = card.downloader.take();
-
-                async move {
-                    if let Some(downloader) = downloader {
-                        downloader.stop().await;
-                    }
-                }
-            });
-
-            Self::new(room, user, settings, subscription)
+            Self::new(room, user, settings)
         });
 
         let subscription = cx.subscribe(&card, Self::on_event);
@@ -159,15 +145,25 @@ impl RoomCard {
             }
             RoomCardEvent::StopRecording => {
                 this.update(cx, |this, cx| {
-                    let downloader = this.downloader.take();
-                    cx.foreground_executor()
-                        .spawn(async move {
-                            if let Some(downloader) = downloader {
-                                downloader.stop().await;
-                            }
-                        })
-                        .detach();
                     this.status = RoomCardStatus::Waiting;
+
+                    let downloader = this.downloader.take();
+                    if downloader.is_some() {
+                        cx.foreground_executor()
+                            .spawn(async move {
+                                if let Some(downloader) = downloader {
+                                    downloader.stop().await;
+                                }
+                            })
+                            .detach();
+
+                        cx.update_global(|state: &mut AppState, _| {
+                            state
+                                .downloaders
+                                .retain(|d| d.context.room_info.room_id != this.room_info.room_id);
+                        });
+                    }
+
                     this.user_stop = true;
                     cx.notify();
                 });
@@ -183,13 +179,22 @@ impl RoomCard {
                         this.update(cx, |this, cx| {
                             this.status = RoomCardStatus::Waiting;
                             let downloader = this.downloader.take();
-                            cx.foreground_executor()
-                                .spawn(async move {
-                                    if let Some(downloader) = downloader {
-                                        downloader.stop().await;
-                                    }
-                                })
-                                .detach();
+                            if downloader.is_some() {
+                                cx.foreground_executor()
+                                    .spawn(async move {
+                                        if let Some(downloader) = downloader {
+                                            downloader.stop().await;
+                                        }
+                                    })
+                                    .detach();
+
+                                cx.update_global(|state: &mut AppState, _| {
+                                    state.downloaders.retain(|d| {
+                                        d.context.room_info.room_id != this.room_info.room_id
+                                    });
+                                });
+                            }
+
                             cx.notify();
                         });
                     }
@@ -198,31 +203,34 @@ impl RoomCard {
                     }
                 }
             }
+            RoomCardEvent::WillDeleted(room_id) => {
+                cx.update_global(|state: &mut AppState, _| {
+                    state
+                        .downloaders
+                        .retain(|d| d.context.room_info.room_id != *room_id);
+                    state
+                        .room_entities
+                        .retain(|e| e.entity_id() != this.entity_id());
+                    state.settings.rooms.retain(|d| d.room_id != *room_id);
+                    log_user_action("房间删除完成", Some(&format!("房间号: {room_id}")));
+                });
+            }
         }
     }
 
-    fn on_delete(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut gpui::Context<Self>) {
+    fn on_delete(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let room_id = self.settings.room_id;
         log_user_action("删除房间", Some(&format!("房间号: {room_id}")));
 
-        let this = cx.entity();
-        cx.update_global(|state: &mut AppState, _| {
-            state.room_entities = state
-                .room_entities
-                .iter()
-                .filter(|room| room.entity_id() != this.entity_id())
-                .cloned()
-                .collect();
-            state.settings.rooms = state
-                .settings
-                .rooms
-                .iter()
-                .filter(|room| room.room_id != room_id)
-                .cloned()
-                .collect();
-        });
+        if let Some(downloader) = self.downloader.take() {
+            cx.foreground_executor()
+                .spawn(async move {
+                    downloader.stop().await;
+                })
+                .detach();
+        }
 
-        log_user_action("房间删除完成", Some(&format!("房间号: {room_id}")));
+        cx.emit(RoomCardEvent::WillDeleted(room_id));
     }
 }
 
@@ -249,6 +257,10 @@ impl RoomCard {
         this.update(cx, |this, _| {
             this.downloader = Some(downloader.clone());
         });
+
+        AppState::global_mut(cx)
+            .downloaders
+            .push(downloader.clone());
 
         cx.spawn(async move |cx| {
             let downloader = downloader.clone();

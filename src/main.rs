@@ -64,13 +64,20 @@ fn main() {
         });
 
         cx.on_app_quit(move |cx| {
-            cx.read_global(|state: &AppState, _| {
+            let downloaders = cx.read_global(|state: &AppState, _| {
                 state.settings.save();
+
+                state.downloaders.clone()
             });
 
+            let app_quitting = app_quitting.clone();
             async move {
+                // Wait for all downloaders to stop
+                futures::future::join_all(downloaders.iter().map(|downloader| downloader.stop())).await;
+
                 // 记录应用关闭日志
                 log_app_shutdown();
+                app_quitting.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         })
         .detach();
@@ -83,6 +90,7 @@ fn main() {
 
         open_main_window(cx);
         cx.activate(true);
+
 
         cx.spawn(async move |cx| {
             loop {
@@ -129,20 +137,18 @@ fn main() {
 
                 cx.background_executor().timer(Duration::from_secs(2)).await;
             }
-
-            app_quitting.store(true, std::sync::atomic::Ordering::Relaxed);
         })
         .detach();
     });
 
-    loop {
-        if quiting.load(std::sync::atomic::Ordering::Relaxed) {
-            system_tray.quit();
-            break;
-        }
+    // loop {
+    //     if quiting.load(std::sync::atomic::Ordering::Relaxed) {
+    //         system_tray.quit();
+    //         break;
+    //     }
 
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+    //     std::thread::sleep(std::time::Duration::from_secs(3));
+    // }
 }
 
 fn open_main_window(cx: &mut App) {
@@ -177,11 +183,11 @@ fn open_main_window(cx: &mut App) {
             .open_window(options, |window, cx| {
                 let root = BLiveApp::view(DISPLAY_NAME.into(), window, cx);
 
-                window.on_window_should_close(cx, |w, _| {
-                    w.minimize_window();
+                // window.on_window_should_close(cx, |w, _| {
+                //     w.minimize_window();
 
-                    false
-                });
+                //     false
+                // });
 
                 cx.new(|cx| Root::new(root.into(), window, cx))
             })

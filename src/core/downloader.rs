@@ -78,7 +78,7 @@ pub enum DownloaderType {
 }
 
 pub struct BLiveDownloader {
-    context: DownloaderContext,
+    pub context: DownloaderContext,
     downloader: Mutex<Option<DownloaderType>>,
     max_reconnect_attempts: Mutex<u32>,
     reconnect_delay: Mutex<Duration>,

@@ -1,11 +1,14 @@
+use crate::core::downloader::BLiveDownloader;
 use crate::logger::{log_config_change, log_user_action};
 use crate::{components::RoomCard, core::HttpClient, settings::GlobalSettings};
 use gpui::{App, Entity, Global};
+use std::sync::Arc;
 
 pub struct AppState {
     pub client: HttpClient,
     pub room_entities: Vec<Entity<RoomCard>>,
     pub settings: GlobalSettings,
+    pub downloaders: Vec<Arc<BLiveDownloader>>,
 }
 
 impl AppState {
@@ -30,8 +33,9 @@ impl AppState {
 
         let state = Self {
             client,
-            room_entities: vec![],
             settings,
+            room_entities: vec![],
+            downloaders: vec![],
         };
         cx.set_global::<AppState>(state);
 

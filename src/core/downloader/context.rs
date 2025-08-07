@@ -142,6 +142,10 @@ impl DownloaderContext {
         // 记录日志
         self.log_event(&event);
 
+        if !self.is_running() {
+            return;
+        }
+
         // 更新UI状态并处理下载器状态
         match &event {
             DownloadEvent::Started { .. } => {

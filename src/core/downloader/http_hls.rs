@@ -200,8 +200,8 @@ impl Downloader for HttpHlsDownloader {
     }
 
     async fn stop(&mut self) -> Result<()> {
-        // self.context.set_running(false);
-        // self.context.set_status(DownloadStatus::NotStarted);
+        self.context.set_running(false);
+        self.context.set_status(DownloadStatus::NotStarted);
 
         if let Some(stop_rx) = self.stop_rx.take() {
             match stop_rx.await {

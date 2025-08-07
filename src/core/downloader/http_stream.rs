@@ -267,10 +267,8 @@ impl Downloader for HttpStreamDownloader {
                                                     || msg.contains("Connection refused")
                                                 {
                                                     context.push_event(DownloadEvent::Error {
-                                                error: DownloaderError::network_connection_failed(
-                                                    msg, 0,
-                                                ),
-                                            });
+                                                        error: DownloaderError::network_connection_failed(msg),
+                                                    });
                                                 } else if msg.contains("Protocol not found")
                                                     || msg.contains("Invalid data found")
                                                     || msg.contains("Decoder failed")

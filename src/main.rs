@@ -24,7 +24,7 @@ fn main() {
     init_logger().expect("无法初始化日志系统");
     log_app_start(env!("CARGO_PKG_VERSION"));
 
-    let quiting = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let quitting = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (tx, rx) = flume::unbounded();
     let mut system_tray = SystemTray::new();
 
@@ -43,7 +43,7 @@ fn main() {
         open_main_window(cx);
     });
 
-    let app_quitting = quiting.clone();
+    let app_quitting = quitting.clone();
     app.run(move |cx| {
         gpui_component::init(cx);
 
@@ -137,7 +137,7 @@ fn main() {
     });
 
     loop {
-        if quiting.load(std::sync::atomic::Ordering::Relaxed) {
+        if quitting.load(std::sync::atomic::Ordering::Relaxed) {
             system_tray.quit();
             break;
         }

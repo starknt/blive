@@ -152,7 +152,7 @@ impl Downloader for HttpHlsDownloader {
                                                 context.push_event(DownloadEvent::Error {
                                                     error:
                                                         DownloaderError::network_connection_failed(
-                                                            msg, 0,
+                                                            msg,
                                                         ),
                                                 });
                                             } else if msg.contains("Protocol not found")

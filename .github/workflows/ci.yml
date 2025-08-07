@@ -13,8 +13,8 @@ jobs:
       fail-fast: true
       matrix:
         os:
-          - macos-latest
-          - windows-latest
+          - macos
+          - windows
     runs-on: ${{ matrix.os }}
     steps:
       - name: CheckOut
@@ -69,7 +69,7 @@ jobs:
       - name: Upload bundle artefact
         uses: actions/upload-artifact@v4
         with:
-          name: blive-${{ matrix.os }}
+          name: BLive-${{ matrix.os }}_Setup
           path: target/release/bundle/
 
   autofix:

@@ -211,7 +211,9 @@ pub struct GlobalSettings {
     pub format: VideoContainer,
     /// 录制编码
     pub codec: StreamCodec,
+    /// 录制目录
     pub record_dir: String,
+    /// 录制房间
     pub rooms: Vec<RoomSettings>,
 }
 
@@ -330,6 +332,10 @@ impl Default for GlobalSettings {
 pub struct RoomSettings {
     /// 房间号
     pub room_id: u64,
+    /// 录制目录
+    pub record_dir: Option<String>,
+    /// 策略
+    pub strategy: Option<Strategy>,
     /// 录制质量
     pub quality: Option<Quality>,
     /// 录制格式
@@ -344,18 +350,8 @@ impl RoomSettings {
     pub fn new(room_id: u64) -> Self {
         Self {
             room_id,
-            quality: None,
-            format: None,
-            codec: None,
-            record_name: DEFAULT_RECORD_NAME.to_string(),
-        }
-    }
-}
-
-impl Default for RoomSettings {
-    fn default() -> Self {
-        Self {
-            room_id: 0,
+            record_dir: None,
+            strategy: None,
             quality: None,
             format: None,
             codec: None,

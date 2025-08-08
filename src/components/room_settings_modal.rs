@@ -1,46 +1,40 @@
-use crate::{
-    settings::{GlobalSettings, Quality, Strategy, StreamCodec, VideoContainer},
-    state::AppState,
-};
+use crate::settings::{Quality, RoomSettings, Strategy, StreamCodec, VideoContainer};
 use gpui::{App, ClickEvent, Entity, EventEmitter, Subscription, Window, prelude::*};
 use gpui_component::{
     ContextModal, StyledExt,
     button::{Button, ButtonVariants},
     dropdown::{Dropdown, DropdownState},
     h_flex,
-    input::{InputEvent, InputState, TextInput},
+    input::{InputState, TextInput},
     notification::Notification,
     text::Text,
     v_flex,
 };
 
-pub struct SettingsModal {
-    global_settings: GlobalSettings,
-    record_dir_input: Entity<InputState>,
+pub struct RoomSettingsModal {
+    settings: RoomSettings,
+    record_name_input: Entity<InputState>,
     strategy_input: Entity<DropdownState<Vec<String>>>,
     quality_input: Entity<DropdownState<Vec<String>>>,
     format_input: Entity<DropdownState<Vec<String>>>,
     codec_input: Entity<DropdownState<Vec<String>>>,
     _subscriptions: Vec<Subscription>,
-    lock: bool,
 }
 
 #[derive(Debug, Clone)]
-pub enum SettingsModalEvent {
-    SaveSettings(GlobalSettings),
+pub enum RoomSettingsModalEvent {
+    SaveSettings(RoomSettings),
     QuitSettings,
 }
 
-impl EventEmitter<SettingsModalEvent> for SettingsModal {}
+impl EventEmitter<RoomSettingsModalEvent> for RoomSettingsModal {}
 
-impl SettingsModal {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let global_settings = AppState::global(cx).settings.clone();
-
-        let record_dir_input = cx.new(|cx| {
+impl RoomSettingsModal {
+    pub fn new(settings: RoomSettings, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let record_name_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("录制目录路径")
-                .default_value(global_settings.record_dir.clone())
+                .placeholder("录制文件名")
+                .default_value(settings.record_name.clone())
         });
 
         let strategy_input = cx.new(|cx| {
@@ -54,7 +48,11 @@ impl SettingsModal {
                 cx,
             );
 
-            state.set_selected_value(&global_settings.strategy.to_string(), window, cx);
+            state.set_selected_value(
+                &settings.strategy.unwrap_or_default().to_string(),
+                window,
+                cx,
+            );
 
             state
         });
@@ -75,7 +73,11 @@ impl SettingsModal {
                 cx,
             );
 
-            state.set_selected_value(&global_settings.quality.to_string(), window, cx);
+            state.set_selected_value(
+                &settings.quality.unwrap_or_default().to_string(),
+                window,
+                cx,
+            );
 
             state
         });
@@ -92,7 +94,7 @@ impl SettingsModal {
                 cx,
             );
 
-            state.set_selected_value(&global_settings.format.to_string(), window, cx);
+            state.set_selected_value(&settings.format.unwrap_or_default().to_string(), window, cx);
 
             state
         });
@@ -105,58 +107,33 @@ impl SettingsModal {
                 cx,
             );
 
-            state.set_selected_value(&global_settings.codec.to_string(), window, cx);
+            state.set_selected_value(&settings.codec.unwrap_or_default().to_string(), window, cx);
 
             state
         });
 
-        let _subscriptions =
-            vec![cx.subscribe_in(&record_dir_input, window, Self::on_record_dir_input_change)];
+        let _subscriptions = vec![];
 
         Self {
-            global_settings,
-            record_dir_input,
+            settings,
+            record_name_input,
             strategy_input,
             quality_input,
             format_input,
             codec_input,
             _subscriptions,
-            lock: false,
         }
     }
 
-    fn on_record_dir_input_change(
-        &mut self,
-        this: &Entity<InputState>,
-        event: &InputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.lock {
-            self.lock = false;
-            return;
-        }
-
-        if let InputEvent::Change(value) = event {
-            this.update(cx, |this, cx| {
-                self.lock = true;
-                this.set_value(value, window, cx);
-            });
-        }
-    }
-
-    pub fn view(window: &mut Window, cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| Self::new(window, cx))
+    pub fn view(settings: RoomSettings, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| Self::new(settings, window, cx))
     }
 
     pub fn save_settings(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let strategy_str = self.strategy_input.read(cx).selected_value();
-        let record_dir = self.record_dir_input.read(cx).value();
         let quality_str = self.quality_input.read(cx).selected_value();
         let format = self.format_input.read(cx).selected_value();
         let codec = self.codec_input.read(cx).selected_value();
-
-        self.global_settings.record_dir = record_dir.to_string();
 
         // 策略设置
         if let Some(strategy_str) = strategy_str {
@@ -165,7 +142,7 @@ impl SettingsModal {
                 "配置优先" => Strategy::PriorityConfig,
                 _ => Strategy::LowCost,
             };
-            self.global_settings.strategy = strategy;
+            self.settings.strategy = Some(strategy);
         }
 
         // 解析质量设置
@@ -180,54 +157,37 @@ impl SettingsModal {
                 "流畅" => Quality::Smooth,
                 _ => Quality::Original,
             };
-            self.global_settings.quality = quality;
+
+            self.settings.quality = Some(quality);
         };
 
         if let Some(format) = format {
-            self.global_settings.format = match format.as_str() {
-                "flv" => VideoContainer::FLV,
-                "fmp4" => VideoContainer::FMP4,
-                "ts" => VideoContainer::TS,
-                _ => VideoContainer::FMP4,
+            self.settings.format = match format.as_str() {
+                "flv" => Some(VideoContainer::FLV),
+                "fmp4" => Some(VideoContainer::FMP4),
+                "ts" => Some(VideoContainer::TS),
+                _ => Some(VideoContainer::FMP4),
             };
         }
 
         if let Some(codec) = codec {
-            self.global_settings.codec = match codec.as_str() {
-                "avc" => StreamCodec::AVC,
-                "hevc" => StreamCodec::HEVC,
-                _ => StreamCodec::AVC,
+            self.settings.codec = match codec.as_str() {
+                "avc" => Some(StreamCodec::AVC),
+                "hevc" => Some(StreamCodec::HEVC),
+                _ => Some(StreamCodec::AVC),
             };
         }
 
-        cx.emit(SettingsModalEvent::SaveSettings(
-            self.global_settings.clone(),
-        ));
-
+        cx.emit(RoomSettingsModalEvent::SaveSettings(self.settings.clone()));
         window.push_notification(Notification::success("设置保存成功"), cx);
     }
 
     pub fn quit_settings(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(SettingsModalEvent::QuitSettings);
-    }
-
-    fn open_dir(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            if let Some(handle) = rfd::AsyncFileDialog::new().pick_folder().await {
-                let value = handle.path().to_string_lossy().to_string();
-
-                let _ = this.update(cx, |this, cx| {
-                    this.record_dir_input.update(cx, |_, cx| {
-                        cx.emit(InputEvent::Change(value.into()));
-                    });
-                });
-            }
-        })
-        .detach();
+        cx.emit(RoomSettingsModalEvent::QuitSettings);
     }
 }
 
-impl Render for SettingsModal {
+impl Render for RoomSettingsModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_y_4()
@@ -238,20 +198,8 @@ impl Render for SettingsModal {
                         .child(
                             v_flex()
                                 .gap_y_2()
-                                .child(Text::String("录制目录".into()))
-                                .child(
-                                    h_flex()
-                                        .gap_x_4()
-                                        .child(
-                                            TextInput::new(&self.record_dir_input).disabled(true),
-                                        )
-                                        .child(
-                                            Button::new("open_dir")
-                                                .label("选择目录")
-                                                .primary()
-                                                .on_click(cx.listener(Self::open_dir)),
-                                        ),
-                                ),
+                                .child(Text::String("录制文件名".into()))
+                                .child(TextInput::new(&self.record_name_input)),
                         )
                         .child(
                             v_flex()

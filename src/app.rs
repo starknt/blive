@@ -1,4 +1,6 @@
-use gpui::{App, Axis, ClickEvent, Entity, Subscription, Window, div, prelude::*, px};
+use gpui::{
+    App, Axis, ClickEvent, Entity, EventEmitter, Subscription, Window, div, prelude::*, px,
+};
 use gpui_component::{
     ActiveTheme as _, ContextModal, Root, StyledExt,
     button::{Button, ButtonVariants},
@@ -10,11 +12,15 @@ use gpui_component::{
 
 use crate::{
     components::{RoomCard, RoomCardStatus, RoomInput, RoomInputEvent},
-    logger::{log_recording_error, log_user_action},
+    logger::log_user_action,
     settings::RoomSettings,
     state::AppState,
     title_bar::AppTitleBar,
 };
+
+enum BLiveAppEvent {
+    InitRoom(RoomSettings),
+}
 
 pub struct BLiveApp {
     room_num: u64,
@@ -23,49 +29,29 @@ pub struct BLiveApp {
     _subscriptions: Vec<Subscription>,
 }
 
+impl EventEmitter<BLiveAppEvent> for BLiveApp {}
+
 impl BLiveApp {
-    pub fn init(cx: &mut App) {
-        log_user_action("初始化主应用组件", None);
-
-        let state = AppState::global(cx);
-        for settings in state.settings.rooms.clone() {
-            let client = state.client.clone();
-            let room_id = settings.room_id;
-
-            log_user_action("加载房间", Some(&format!("房间号: {room_id}")));
-
-            cx.spawn(async move |cx| {
-                let (room_data, user_data) = futures::join!(
-                    client.get_live_room_info(room_id),
-                    client.get_live_room_user_info(room_id)
-                );
-
-                if let Ok(room_data) = room_data
-                    && let Ok(user_data) = user_data
-                {
-                    cx.update_global(|state: &mut AppState, cx| {
-                        let room =
-                            RoomCard::view(room_data, user_data.info, settings.clone(), cx, client);
-
-                        state.room_entities.push(room);
-                        log_user_action("房间卡片创建成功", Some(&format!("房间号: {room_id}")));
-                    })
-                    .unwrap();
-                } else {
-                    log_recording_error(room_id, "获取房间信息失败");
-                };
-            })
-            .detach();
-        }
-    }
-
-    /// 创建新的应用实例
-    fn new(title: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        title: String,
+        rooms: Vec<RoomSettings>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let title_bar = cx.new(|cx| AppTitleBar::new(title, window, cx));
         let room_num = 1804892069;
         let room_input = RoomInput::view(room_num, window, cx);
 
-        let _subscriptions = vec![cx.subscribe_in(&room_input, window, Self::on_room_input_change)];
+        let _subscriptions = vec![
+            cx.subscribe_in(&room_input, window, Self::on_room_input_change),
+            cx.subscribe_in(&cx.entity(), window, Self::on_app_event),
+        ];
+
+        for room in rooms {
+            let room_id = room.room_id;
+            log_user_action("加载房间", Some(&format!("房间号: {room_id}")));
+            cx.emit(BLiveAppEvent::InitRoom(room));
+        }
 
         Self {
             room_num,
@@ -76,8 +62,13 @@ impl BLiveApp {
     }
 
     /// 创建应用视图
-    pub fn view(title: String, window: &mut Window, cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| Self::new(title, window, cx))
+    pub fn view(
+        title: String,
+        rooms: Vec<RoomSettings>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| Self::new(title, rooms, window, cx))
     }
 
     /// 处理房间输入变化
@@ -96,52 +87,70 @@ impl BLiveApp {
     /// 添加录制房间
     fn add_recording(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.room_num > 0 {
-            let client = AppState::global(cx).client.clone();
             let room_num = self.room_num;
-
-            // 检查是否已经存在
-            if AppState::global(cx)
-                .settings
-                .rooms
-                .iter()
-                .any(|room| room.room_id == room_num)
-            {
-                log_user_action("尝试添加重复房间", Some(&format!("房间号: {room_num}")));
-                window.push_notification(
-                    Notification::warning(format!("直播间 {room_num} 已监听")),
-                    cx,
-                );
-                return;
-            }
 
             log_user_action("点击添加录制按钮", Some(&format!("房间号: {room_num}")));
 
-            cx.spawn(async move |_, cx| {
-                let (room_data, user_data) = futures::join!(
-                    client.get_live_room_info(room_num),
-                    client.get_live_room_user_info(room_num)
-                );
-
-                if let Ok(room_data) = room_data
-                    && let Ok(user_data) = user_data
+            cx.update_global(|state: &mut AppState, cx| {
+                // 检查是否已经存在
+                if state
+                    .settings
+                    .rooms
+                    .iter()
+                    .any(|room| room.room_id == room_num)
                 {
-                    cx.update_global(|state: &mut AppState, cx| {
-                        let settings = RoomSettings::new(room_num);
-                        let room =
-                            RoomCard::view(room_data, user_data.info, settings.clone(), cx, client);
+                    log_user_action("尝试添加重复房间", Some(&format!("房间号: {room_num}")));
+                    window.push_notification(
+                        Notification::warning(format!("直播间 {room_num} 已监听")),
+                        cx,
+                    );
+                    return;
+                }
 
-                        state.room_entities.push(room);
-                        state.settings.rooms.push(settings);
-                        log_user_action("新房间添加成功", Some(&format!("房间号: {room_num}")));
-                    })
-                    .unwrap();
-                } else {
-                    log_recording_error(room_num, "获取房间信息失败");
-                };
-            })
-            .detach();
+                let settings = RoomSettings::new(room_num);
+                let room = RoomCard::view(
+                    state.settings.clone(),
+                    settings.clone(),
+                    window,
+                    cx,
+                    state.client.clone(),
+                );
+                state.room_entities.push(room);
+                state.settings.rooms.push(settings);
+                log_user_action("新房间添加成功", Some(&format!("房间号: {room_num}")));
+            });
         } else {
             log_user_action("尝试添加无效房间", Some("房间号为0"));
+        }
+    }
+}
+
+impl BLiveApp {
+    fn on_app_event(
+        &mut self,
+        _: &Entity<Self>,
+        event: &BLiveAppEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            BLiveAppEvent::InitRoom(settings) => {
+                cx.update_global(|state: &mut AppState, cx| {
+                    let room = RoomCard::view(
+                        state.settings.clone(),
+                        settings.clone(),
+                        window,
+                        cx,
+                        state.client.clone(),
+                    );
+
+                    state.room_entities.push(room);
+                    log_user_action(
+                        "房间卡片创建成功",
+                        Some(&format!("房间号: {}", settings.room_id)),
+                    );
+                });
+            }
         }
     }
 }
@@ -165,9 +174,14 @@ impl Render for BLiveApp {
         div()
             .size_full()
             .bg(cx.theme().background)
+            .flex()
+            .flex_col()
+            .min_w_full()
+            .min_h_full()
             .child(self.title_bar.clone())
             .child(
                 v_flex()
+                .flex_1()
                     .scrollable(Axis::Vertical)
                     .size_full()
                     .pb_6()
@@ -181,7 +195,6 @@ impl Render for BLiveApp {
                                     .size_full()
                                     .gap_8()
                                     .child(
-                                        // 欢迎区域
                                         div()
                                             .rounded_xl()
                                             .p_8()
@@ -205,7 +218,6 @@ impl Render for BLiveApp {
                                             ),
                                     )
                                     .child(
-                                        // 输入区域卡片
                                         div()
                                             .rounded_xl()
                                             .p_6()

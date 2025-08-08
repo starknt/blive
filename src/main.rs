@@ -53,7 +53,6 @@ fn main() {
         AppState::init(cx);
         theme::init(cx);
         ThemeSwitcher::init(cx);
-        BLiveApp::init(cx);
 
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
 
@@ -176,7 +175,19 @@ fn open_main_window(cx: &mut App) {
 
         let window = cx
             .open_window(options, |window, cx| {
-                let root = BLiveApp::view(DISPLAY_NAME.into(), window, cx);
+                let (rooms, initialized_app) = cx.read_global(|state: &AppState, _| {
+                    (state.settings.rooms.clone(), state.initialized_app)
+                });
+                let root = BLiveApp::view(
+                    DISPLAY_NAME.into(),
+                    if !initialized_app { rooms } else { vec![] },
+                    window,
+                    cx,
+                );
+
+                cx.update_global(|state: &mut AppState, _| {
+                    state.initialized_app = true;
+                });
 
                 window.on_window_should_close(cx, |window, _| {
                     #[cfg(target_os = "windows")]

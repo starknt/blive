@@ -5,6 +5,7 @@ use gpui::{App, Entity, Global};
 use std::sync::Arc;
 
 pub struct AppState {
+    pub initialized_app: bool,
     pub client: HttpClient,
     pub room_entities: Vec<Entity<RoomCard>>,
     pub settings: GlobalSettings,
@@ -32,6 +33,7 @@ impl AppState {
         }
 
         let state = Self {
+            initialized_app: false,
             client,
             settings,
             room_entities: vec![],

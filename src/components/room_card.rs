@@ -13,11 +13,11 @@ use crate::{
     state::AppState,
 };
 use gpui::{
-    App, ClickEvent, Entity, EventEmitter, ObjectFit, Subscription, WeakEntity, Window, div, img,
-    prelude::*, px,
+    App, ClickEvent, Entity, EventEmitter, ObjectFit, SharedString, Subscription, WeakEntity,
+    Window, div, img, prelude::*, px,
 };
 use gpui_component::{
-    ActiveTheme as _, ContextModal, Disableable, StyledExt,
+    ActiveTheme as _, ContextModal, Disableable, Icon, IconName, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
     text::Text,
@@ -570,6 +570,25 @@ impl Render for RoomCard {
                                             h_flex().flex_1().children(vec![
                                                 Button::new("record")
                                                     .primary()
+                                                    .map(|this| {
+                                                        let play_icon = Icon::default();
+                                                        let play_icon = play_icon.path(
+                                                            SharedString::new("icons/play.svg"),
+                                                        );
+                                                        let pause_icon = Icon::default();
+                                                        let pause_icon = pause_icon.path(
+                                                            SharedString::new("icons/pause.svg"),
+                                                        );
+
+                                                        if matches!(
+                                                            room_info.live_status,
+                                                            LiveStatus::Live
+                                                        ) {
+                                                            this.icon(pause_icon)
+                                                        } else {
+                                                            this.icon(play_icon)
+                                                        }
+                                                    })
                                                     .disabled(!matches!(
                                                         room_info.live_status,
                                                         LiveStatus::Live
@@ -629,12 +648,19 @@ impl Render for RoomCard {
                                     .child(
                                         Button::new("settings")
                                             .primary()
+                                            .icon(IconName::Settings2)
                                             .label("房间设置")
                                             .on_click(cx.listener(Self::on_open_settings)),
                                     )
                                     .child(
                                         Button::new("删除")
                                             .danger()
+                                            .map(|this| {
+                                                let icon = Icon::default();
+                                                let icon =
+                                                    icon.path(SharedString::new("icons/trash.svg"));
+                                                this.icon(icon)
+                                            })
                                             .label("删除")
                                             .on_click(cx.listener(Self::on_delete)),
                                     ),

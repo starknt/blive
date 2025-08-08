@@ -1,7 +1,7 @@
 use num_enum::FromPrimitive;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, FromPrimitive, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, FromPrimitive, PartialEq, Eq, Default)]
 #[repr(u8)]
 #[serde(from = "u8")]
 pub enum LiveStatus {
@@ -11,7 +11,7 @@ pub enum LiveStatus {
     Carousel = 2,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct LiveRoomInfoData {
     pub uid: u64,
     pub room_id: u64,

@@ -7,7 +7,7 @@ pub struct LiveUserData {
     pub san: i32,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct LiveUserInfo {
     pub uid: u64,
     pub uname: String,

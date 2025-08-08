@@ -556,8 +556,8 @@ impl Render for RoomCard {
                 );
         }
 
-        let room_info = room_info.clone().unwrap();
-        let user_info = user_info.clone().unwrap();
+        let room_info = room_info.clone().unwrap_or_default();
+        let user_info = user_info.clone().unwrap_or_default();
 
         div()
             .rounded_lg()

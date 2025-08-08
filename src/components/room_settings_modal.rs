@@ -1,7 +1,7 @@
 use crate::settings::{Quality, RoomSettings, Strategy, StreamCodec, VideoContainer};
 use gpui::{App, ClickEvent, Entity, EventEmitter, Subscription, Window, prelude::*};
 use gpui_component::{
-    ContextModal, StyledExt,
+    ContextModal, IndexPath, StyledExt,
     button::{Button, ButtonVariants},
     dropdown::{Dropdown, DropdownState},
     h_flex,
@@ -43,7 +43,7 @@ impl RoomSettingsModal {
                     Strategy::LowCost.to_string(),
                     Strategy::PriorityConfig.to_string(),
                 ],
-                Some(0),
+                Some(IndexPath::new(0)),
                 window,
                 cx,
             );
@@ -68,7 +68,7 @@ impl RoomSettingsModal {
                     Quality::HD.to_string(),
                     Quality::Smooth.to_string(),
                 ],
-                Some(0),
+                Some(IndexPath::new(0)),
                 window,
                 cx,
             );
@@ -89,7 +89,7 @@ impl RoomSettingsModal {
                     VideoContainer::FMP4.to_string(),
                     VideoContainer::TS.to_string(),
                 ],
-                Some(0),
+                Some(IndexPath::new(0)),
                 window,
                 cx,
             );
@@ -102,7 +102,7 @@ impl RoomSettingsModal {
         let codec_input = cx.new(|cx| {
             let mut state = DropdownState::new(
                 vec!["avc".to_string(), "hevc".to_string()],
-                Some(0),
+                Some(IndexPath::new(0)),
                 window,
                 cx,
             );

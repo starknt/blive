@@ -20,6 +20,7 @@ use gpui_component::{
     ActiveTheme as _, ContextModal, Disableable, Icon, IconName, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
+    skeleton::Skeleton,
     text::Text,
     v_flex,
 };
@@ -455,12 +456,104 @@ impl Render for RoomCard {
         let user_info = &self.user_info;
 
         if room_info.is_none() || user_info.is_none() {
-            return div()
+            return v_flex()
                 .rounded_lg()
                 .p_4()
+                .gap_y_2()
                 .border(px(1.0))
                 .border_color(cx.theme().border)
-                .child(Text::String("房间信息加载中...".into()));
+                .child(
+                    v_flex().gap_4().child(
+                        h_flex()
+                            .justify_between()
+                            .items_start()
+                            .child(
+                                h_flex()
+                                    .gap_3()
+                                    .items_start()
+                                    .child(
+                                        Skeleton::new()
+                                            .rounded_lg()
+                                            .w_40()
+                                            .p_4()
+                                            .border(px(1.0))
+                                            .border_color(cx.theme().border)
+                                            .h_full(),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                Skeleton::new()
+                                                    .rounded_lg()
+                                                    .p_4()
+                                                    .border(px(1.0))
+                                                    .border_color(cx.theme().border)
+                                                    .size_full()
+                                                    .w_56(),
+                                            )
+                                            .child(
+                                                Skeleton::new()
+                                                    .rounded_lg()
+                                                    .p_4()
+                                                    .border(px(1.0))
+                                                    .border_color(cx.theme().border)
+                                                    .size_full()
+                                                    .w_32(),
+                                            )
+                                            .child(
+                                                Skeleton::new()
+                                                    .rounded_lg()
+                                                    .p_4()
+                                                    .border(px(1.0))
+                                                    .border_color(cx.theme().border)
+                                                    .size_full()
+                                                    .w_24(),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Skeleton::new()
+                                            .rounded_lg()
+                                            .p_4()
+                                            .border(px(1.0))
+                                            .border_color(cx.theme().border)
+                                            .size_full()
+                                            .w_32(),
+                                    )
+                                    .child(
+                                        Skeleton::new()
+                                            .rounded_lg()
+                                            .p_4()
+                                            .border(px(1.0))
+                                            .border_color(cx.theme().border)
+                                            .size_full()
+                                            .w_32(),
+                                    )
+                                    .child(
+                                        Skeleton::new()
+                                            .rounded_lg()
+                                            .p_4()
+                                            .border(px(1.0))
+                                            .border_color(cx.theme().border)
+                                            .size_full()
+                                            .w_16(),
+                                    ),
+                            ),
+                    ),
+                )
+                .child(
+                    Skeleton::new()
+                        .rounded_lg()
+                        .p_4()
+                        .border(px(1.0))
+                        .border_color(cx.theme().border)
+                        .size_full()
+                        .w_112(),
+                );
         }
 
         let room_info = room_info.clone().unwrap();

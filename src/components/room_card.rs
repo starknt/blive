@@ -33,8 +33,6 @@ enum RoomCardEvent {
     StartRecording,
     StopRecording,
     WillDeleted(u64),
-    SettingsChanged(RoomSettings),
-    QuitSettings,
 }
 
 #[derive(Clone, Default, PartialEq, Debug)]
@@ -175,19 +173,70 @@ impl RoomCard {
             );
 
             let subscription = vec![
-                cx.subscribe(
+                cx.subscribe_in(
                     &settings_modal,
-                    |card: &mut RoomCard, _, event, cx| match event {
+                    window,
+                    |card: &mut RoomCard, _, event, window, cx| match event {
                         RoomSettingsModalEvent::SaveSettings(settings) => {
                             card.settings = settings.clone();
-                            cx.emit(RoomCardEvent::SettingsChanged(settings.clone()));
+
+                            cx.update_global(|state: &mut AppState, _| {
+                                let global_settings = state.settings.clone();
+
+                                // 更新房间设置
+                                for room in state.settings.rooms.iter_mut() {
+                                    if room.room_id == settings.room_id {
+                                        if settings.codec.unwrap_or(global_settings.codec)
+                                            == global_settings.codec
+                                        {
+                                            room.codec = None;
+                                        } else {
+                                            room.codec = Some(
+                                                settings.codec.unwrap_or(global_settings.codec),
+                                            );
+                                        }
+
+                                        if settings.format.unwrap_or(global_settings.format)
+                                            == global_settings.format
+                                        {
+                                            room.format = None;
+                                        } else {
+                                            room.format = Some(
+                                                settings.format.unwrap_or(global_settings.format),
+                                            );
+                                        }
+
+                                        if settings.quality.unwrap_or(global_settings.quality)
+                                            == global_settings.quality
+                                        {
+                                            room.quality = None;
+                                        } else {
+                                            room.quality = Some(
+                                                settings.quality.unwrap_or(global_settings.quality),
+                                            );
+                                        }
+
+                                        if settings.strategy.unwrap_or(global_settings.strategy)
+                                            == global_settings.strategy
+                                        {
+                                            room.strategy = None;
+                                        } else {
+                                            room.strategy = Some(
+                                                settings
+                                                    .strategy
+                                                    .unwrap_or(global_settings.strategy),
+                                            );
+                                        }
+                                    }
+                                }
+                            });
                         }
                         RoomSettingsModalEvent::QuitSettings => {
-                            cx.emit(RoomCardEvent::QuitSettings);
+                            window.close_modal(cx);
                         }
                     },
                 ),
-                cx.subscribe(&cx.entity(), Self::on_event),
+                cx.subscribe_in(&cx.entity(), window, Self::on_event),
             ];
 
             Self::new(
@@ -207,7 +256,13 @@ impl RoomCard {
         })
     }
 
-    fn on_event(&mut self, this: Entity<Self>, event: &RoomCardEvent, cx: &mut Context<Self>) {
+    fn on_event(
+        &mut self,
+        this: &Entity<Self>,
+        event: &RoomCardEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match event {
             RoomCardEvent::LiveStatusChanged(status) => {
                 self.status = match status {
@@ -217,83 +272,77 @@ impl RoomCard {
                 cx.emit(RoomCardEvent::StatusChanged(self.status.clone()));
             }
             RoomCardEvent::StartRecording => {
-                this.update(cx, |this, cx| {
-                    this.user_stop = false;
+                self.user_stop = false;
 
-                    let live_status = match &this.room_info {
-                        Some(room_info) => room_info.live_status,
-                        None => LiveStatus::Offline,
-                    };
+                let live_status = match &self.room_info {
+                    Some(room_info) => room_info.live_status,
+                    None => LiveStatus::Offline,
+                };
 
-                    match live_status {
-                        LiveStatus::Live => {
-                            if this.status != RoomCardStatus::Waiting {
-                                // 如果已经在录制中，则不重复开始
-                                return;
-                            }
-
-                            this.status = RoomCardStatus::Recording(0.0);
-                            cx.emit(RoomCardEvent::StatusChanged(this.status.clone()));
+                match live_status {
+                    LiveStatus::Live => {
+                        if self.status != RoomCardStatus::Waiting {
+                            // 如果已经在录制中，则不重复开始
+                            return;
                         }
-                        _ => {
-                            this.status = RoomCardStatus::Error("房间未开播".to_string());
-                        }
+
+                        self.status = RoomCardStatus::Recording(0.0);
+                        cx.emit(RoomCardEvent::StatusChanged(self.status.clone()));
                     }
+                    _ => {
+                        self.status = RoomCardStatus::Error("房间未开播".to_string());
+                    }
+                }
 
-                    cx.notify();
-                });
+                cx.notify();
             }
             RoomCardEvent::StopRecording => {
-                this.update(cx, |this, cx| {
-                    let downloader = this.downloader.take();
-                    if downloader.is_some() {
-                        cx.foreground_executor()
-                            .spawn(async move {
-                                if let Some(downloader) = downloader {
-                                    downloader.stop().await;
-                                }
-                            })
-                            .detach();
+                let downloader = self.downloader.take();
+                if downloader.is_some() {
+                    cx.foreground_executor()
+                        .spawn(async move {
+                            if let Some(downloader) = downloader {
+                                downloader.stop().await;
+                            }
+                        })
+                        .detach();
 
-                        let room_id = this.settings.room_id;
+                    let room_id = self.settings.room_id;
 
-                        cx.update_global(|state: &mut AppState, _| {
-                            state
-                                .downloaders
-                                .retain(|d| d.context.room_info.room_id != room_id);
-                        });
-                    }
+                    cx.update_global(|state: &mut AppState, _| {
+                        state
+                            .downloaders
+                            .retain(|d| d.context.room_info.room_id != room_id);
+                    });
+                }
 
-                    this.status = RoomCardStatus::Waiting;
-                    this.user_stop = true;
-                    cx.notify();
-                });
+                self.status = RoomCardStatus::Waiting;
+                self.user_stop = true;
+                cx.notify();
             }
             RoomCardEvent::StatusChanged(status) => {
                 match status {
                     RoomCardStatus::Recording(_speed) => {
-                        if !self.user_stop {
+                        if !self.user_stop && self.downloader.is_none() {
                             let room_info = self.room_info.clone();
                             let user_info = self.user_info.clone();
                             let client = self.client.clone();
                             let setting = self.settings.clone();
 
-                            cx.spawn(async move |card, cx| {
-                                let downloader = Arc::new(BLiveDownloader::new(
-                                    room_info.unwrap(),
-                                    user_info.unwrap(),
-                                    setting.quality.unwrap_or_default(),
-                                    setting.format.unwrap_or_default(),
-                                    setting.codec.unwrap_or_default(),
-                                    setting.strategy.unwrap_or_default(),
-                                    client,
-                                    card,
-                                ));
+                            let downloader = Arc::new(BLiveDownloader::new(
+                                room_info.unwrap(),
+                                user_info.unwrap(),
+                                setting.quality.unwrap_or_default(),
+                                setting.format.unwrap_or_default(),
+                                setting.codec.unwrap_or_default(),
+                                setting.strategy.unwrap_or_default(),
+                                client,
+                                this.downgrade(),
+                            ));
 
-                                let _ = this.update(cx, |this, _| {
-                                    this.downloader = Some(downloader.clone());
-                                });
+                            self.downloader = Some(downloader.clone());
 
+                            cx.spawn(async move |_, cx| {
                                 let _ = cx.update_global(|state: &mut AppState, _| {
                                     state.downloaders.push(downloader.clone());
                                 });
@@ -315,28 +364,26 @@ impl RoomCard {
                         }
                     }
                     RoomCardStatus::Waiting => {
-                        this.update(cx, |this, cx| {
-                            this.status = RoomCardStatus::Waiting;
-                            let downloader = this.downloader.take();
-                            if downloader.is_some() {
-                                cx.foreground_executor()
-                                    .spawn(async move {
-                                        if let Some(downloader) = downloader {
-                                            downloader.stop().await;
-                                        }
-                                    })
-                                    .detach();
+                        self.status = RoomCardStatus::Waiting;
+                        let downloader = self.downloader.take();
+                        if downloader.is_some() {
+                            cx.foreground_executor()
+                                .spawn(async move {
+                                    if let Some(downloader) = downloader {
+                                        downloader.stop().await;
+                                    }
+                                })
+                                .detach();
 
-                                let room_id = this.settings.room_id;
-                                cx.update_global(|state: &mut AppState, _| {
-                                    state
-                                        .downloaders
-                                        .retain(|d| d.context.room_info.room_id != room_id);
-                                });
-                            }
+                            let room_id = self.settings.room_id;
+                            cx.update_global(|state: &mut AppState, _| {
+                                state
+                                    .downloaders
+                                    .retain(|d| d.context.room_info.room_id != room_id);
+                            });
+                        }
 
-                            cx.notify();
-                        });
+                        cx.notify();
                     }
                     RoomCardStatus::Error(_err) => {
                         // 错误
@@ -354,59 +401,6 @@ impl RoomCard {
                     state.settings.rooms.retain(|d| d.room_id != *room_id);
                     log_user_action("房间删除完成", Some(&format!("房间号: {room_id}")));
                 });
-            }
-            RoomCardEvent::SettingsChanged(settings) => {
-                self.settings = settings.clone();
-                cx.update_global(|state: &mut AppState, _| {
-                    let global_settings = state.settings.clone();
-
-                    // 更新房间设置
-                    for room in state.settings.rooms.iter_mut() {
-                        if room.room_id == settings.room_id {
-                            if settings.codec.unwrap_or(global_settings.codec)
-                                == global_settings.codec
-                            {
-                                room.codec = None;
-                            } else {
-                                room.codec = Some(settings.codec.unwrap_or(global_settings.codec));
-                            }
-
-                            if settings.format.unwrap_or(global_settings.format)
-                                == global_settings.format
-                            {
-                                room.format = None;
-                            } else {
-                                room.format =
-                                    Some(settings.format.unwrap_or(global_settings.format));
-                            }
-
-                            if settings.quality.unwrap_or(global_settings.quality)
-                                == global_settings.quality
-                            {
-                                room.quality = None;
-                            } else {
-                                room.quality =
-                                    Some(settings.quality.unwrap_or(global_settings.quality));
-                            }
-
-                            if settings.strategy.unwrap_or(global_settings.strategy)
-                                == global_settings.strategy
-                            {
-                                room.strategy = None;
-                            } else {
-                                room.strategy =
-                                    Some(settings.strategy.unwrap_or(global_settings.strategy));
-                            }
-                        }
-                    }
-                });
-            }
-            RoomCardEvent::QuitSettings => {
-                if let Some(window) = cx.active_window() {
-                    let _ = cx.update_window(window, |_, window, cx| {
-                        window.close_modal(cx);
-                    });
-                }
             }
         }
     }

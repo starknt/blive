@@ -27,15 +27,20 @@ impl AppSettings {
         Self {
             show,
             focus_handle: cx.focus_handle(),
-            _subscriptions: vec![cx.subscribe(&setting_modal, Self::on_setting_modal_event)],
+            _subscriptions: vec![cx.subscribe_in(
+                &setting_modal,
+                window,
+                Self::on_setting_modal_event,
+            )],
             setting_modal,
         }
     }
 
     fn on_setting_modal_event(
         &mut self,
-        _this: Entity<SettingsModal>,
+        _this: &Entity<SettingsModal>,
         event: &SettingsModalEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
@@ -45,11 +50,7 @@ impl AppSettings {
             }
             SettingsModalEvent::QuitSettings => {
                 self.show.store(false, atomic::Ordering::Relaxed);
-                if let Some(window) = cx.active_window() {
-                    let _ = window.update(cx, |_, window, cx| {
-                        window.close_modal(cx);
-                    });
-                }
+                window.close_modal(cx);
             }
         }
     }

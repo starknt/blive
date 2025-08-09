@@ -101,7 +101,7 @@ impl BLiveApp {
                 {
                     log_user_action("尝试添加重复房间", Some(&format!("房间号: {room_num}")));
                     window.push_notification(
-                        Notification::warning(format!("直播间 {room_num} 已监听")),
+                        Notification::warning(format!("不能重复监听 {room_num}")),
                         cx,
                     );
                     return;

@@ -1,5 +1,5 @@
 use directories::ProjectDirs;
-use num_enum::FromPrimitive;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::logger::log_user_action;
 use gpui::SharedString;
@@ -15,6 +15,7 @@ pub const APP_NAME: &str = "blive";
 pub const DISPLAY_NAME: &str = "BLive";
 pub const DEFAULT_RECORD_NAME: &str = "{up_name}_{room_title}_{datetime}";
 const DEFAULT_THEME: &str = "Catppuccin Mocha";
+const DEFAULT_VERSION: SettingsVersion = SettingsVersion::V1;
 
 static SETTINGS_FILE: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
@@ -59,14 +60,32 @@ static DEFAULT_RECORD_DIR: LazyLock<String> = LazyLock::new(|| {
 });
 
 /// 配置版本枚举
-#[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, PartialOrd, FromPrimitive,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, IntoPrimitive, TryFromPrimitive)]
 #[repr(u32)]
 pub enum SettingsVersion {
     V0 = 0,
-    #[default]
+    #[num_enum(default)]
     V1 = 1,
+}
+
+impl Serialize for SettingsVersion {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let v: u32 = (*self).into(); // From IntoPrimitive
+        serializer.serialize_u32(v)
+    }
+}
+
+impl<'de> Deserialize<'de> for SettingsVersion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let v = u32::deserialize(deserializer)?;
+        SettingsVersion::try_from(v).map_err(serde::de::Error::custom)
+    }
 }
 
 impl Add for SettingsVersion {
@@ -89,12 +108,21 @@ impl AddAssign for SettingsVersion {
 }
 
 /// 版本化配置结构体
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionedSettings {
     /// 配置版本
     pub version: SettingsVersion,
     /// 配置数据
     pub data: GlobalSettings,
+}
+
+impl Default for VersionedSettings {
+    fn default() -> Self {
+        Self {
+            version: SettingsVersion::V1,
+            data: GlobalSettings::default(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, strum::EnumString)]
@@ -452,7 +480,7 @@ impl SettingsMigrator {
     fn migrate_from_versioned(
         versioned_settings: VersionedSettings,
     ) -> Result<GlobalSettings, Box<dyn std::error::Error>> {
-        let current_version = SettingsVersion::default();
+        let current_version = DEFAULT_VERSION;
         let mut settings = versioned_settings.data;
         let mut from_version = versioned_settings.version;
 
@@ -490,7 +518,7 @@ impl SettingsMigrator {
         let mut settings = legacy_settings;
         let mut from_version = SettingsVersion::V0;
 
-        while from_version < SettingsVersion::default() {
+        while from_version < DEFAULT_VERSION {
             settings = Self::migrate_single_version(from_version, settings)?;
             from_version = match from_version {
                 SettingsVersion::V0 => SettingsVersion::V1,
@@ -560,7 +588,7 @@ impl SettingsMigrator {
         settings: &GlobalSettings,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let versioned_settings = VersionedSettings {
-            version: SettingsVersion::default(),
+            version: DEFAULT_VERSION,
             data: settings.clone(),
         };
 
@@ -713,7 +741,7 @@ mod tests {
         let versioned_settings: VersionedSettings = serde_json::from_str(&versioned_json).unwrap();
 
         // 验证版本信息
-        assert_eq!(versioned_settings.version, SettingsVersion::default());
+        assert_eq!(versioned_settings.version, DEFAULT_VERSION);
     }
 
     #[test]

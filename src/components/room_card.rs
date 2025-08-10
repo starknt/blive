@@ -166,7 +166,10 @@ impl RoomCard {
                     format: Some(settings.format.unwrap_or(global_settings.format)),
                     codec: Some(settings.codec.unwrap_or(global_settings.codec)),
                     record_name: settings.record_name.clone(),
-                    record_dir: settings.record_dir.clone(),
+                    record_dir: match settings.record_dir.clone().unwrap_or_default().is_empty() {
+                        true => Some(global_settings.record_dir.clone()),
+                        false => settings.record_dir.clone(),
+                    },
                 },
                 window,
                 cx,
@@ -248,7 +251,10 @@ impl RoomCard {
                     format: Some(settings.format.unwrap_or(global_settings.format)),
                     codec: Some(settings.codec.unwrap_or(global_settings.codec)),
                     record_name: settings.record_name.clone(),
-                    record_dir: settings.record_dir.clone(),
+                    record_dir: match settings.record_dir.clone().unwrap_or_default().is_empty() {
+                        true => Some(global_settings.record_dir.clone()),
+                        false => settings.record_dir.clone(),
+                    },
                 },
                 settings_modal,
                 subscription,

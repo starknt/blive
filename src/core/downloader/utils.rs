@@ -25,3 +25,11 @@ pub fn pretty_kb(kb: f32) -> String {
 
     format!("{:.2} {}", value, units[i])
 }
+
+pub fn pretty_duration(duration: u64) -> String {
+    let hours = duration / 3600;
+    let minutes = (duration % 3600) / 60;
+    let seconds = duration % 60;
+
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
+}

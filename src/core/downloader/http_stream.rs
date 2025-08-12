@@ -118,7 +118,9 @@ impl Downloader for HttpStreamDownloader {
                                             if !context.is_running() {
                                                 context.push_event(DownloadEvent::Completed {
                                                     file_path: output_path.clone(),
-                                                    file_size: 0,
+                                                    file_size: bytes_downloaded,
+                                                    duration: start_time.elapsed().as_secs_f64()
+                                                        as u64,
                                                 });
                                                 let _ = stop_tx.send(());
                                                 return;
@@ -128,6 +130,8 @@ impl Downloader for HttpStreamDownloader {
                                                 context.push_event(DownloadEvent::Completed {
                                                     file_path: config.output_path,
                                                     file_size: bytes_downloaded,
+                                                    duration: start_time.elapsed().as_secs_f64()
+                                                        as u64,
                                                 });
                                                 break; // EOF
                                             }
@@ -220,7 +224,8 @@ impl Downloader for HttpStreamDownloader {
                                     }
                                     context.push_event(DownloadEvent::Completed {
                                         file_path: output_path.clone(),
-                                        file_size: 0,
+                                        file_size: bytes_downloaded,
+                                        duration: start_time.elapsed().as_secs_f64() as u64,
                                     });
                                     let _ = stop_tx.send(());
                                     return;
@@ -241,12 +246,14 @@ impl Downloader for HttpStreamDownloader {
                                         context.push_event(DownloadEvent::Completed {
                                             file_path: output_path.clone(),
                                             file_size: bytes_downloaded,
+                                            duration: start_time.elapsed().as_secs_f64() as u64,
                                         });
                                     }
                                     FfmpegEvent::LogEOF => {
                                         context.push_event(DownloadEvent::Completed {
                                             file_path: output_path.clone(),
                                             file_size: bytes_downloaded,
+                                            duration: start_time.elapsed().as_secs_f64() as u64,
                                         });
                                     }
                                     FfmpegEvent::Log(level, msg) => {

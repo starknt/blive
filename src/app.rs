@@ -163,12 +163,7 @@ impl Render for BLiveApp {
         let recording_count = state
             .room_entities
             .iter()
-            .filter(|room| matches!(room.read(cx).status, RoomCardStatus::Recording(_)))
-            .count();
-        let error_count = state
-            .room_entities
-            .iter()
-            .filter(|room| matches!(room.read(cx).status, RoomCardStatus::Error(_)))
+            .filter(|room| matches!(room.read(cx).status, RoomCardStatus::LiveRecording))
             .count();
 
         div()
@@ -368,27 +363,27 @@ impl Render for BLiveApp {
                                                                                             ),
                                                                                     ),
                                                                             )
-                                                                            .child(
-                                                                                div()
-                                                                                    .text_center()
-                                                                                    .child(
-                                                                                        v_flex()
-                                                                                            .gap_1()
-                                                                                            .child(
-                                                                                                div()
-                                                                                                    .font_semibold()
-                                                                                                    .text_2xl()
-                                                                                                    .text_color(gpui::rgb(0xef4444))
-                                                                                                    .child(Text::String(error_count.to_string().into())),
-                                                                                            )
-                                                                                            .child(
-                                                                                                div()
-                                                                                                    .text_sm()
-                                                                                                    .text_color(cx.theme().accent_foreground)
-                                                                                                    .child(Text::String("错误".into())),
-                                                                                            ),
-                                                                                    ),
-                                                                            ),
+                                                                            // .child(
+                                                                            //     div()
+                                                                            //         .text_center()
+                                                                            //         .child(
+                                                                            //             v_flex()
+                                                                            //                 .gap_1()
+                                                                            //                 .child(
+                                                                            //                     div()
+                                                                            //                         .font_semibold()
+                                                                            //                         .text_2xl()
+                                                                            //                         .text_color(gpui::rgb(0xef4444))
+                                                                            //                         .child(Text::String(error_count.to_string().into())),
+                                                                            //                 )
+                                                                            //                 .child(
+                                                                            //                     div()
+                                                                            //                         .text_sm()
+                                                                            //                         .text_color(cx.theme().accent_foreground)
+                                                                            //                         .child(Text::String("错误".into())),
+                                                                            //                 ),
+                                                                            //         ),
+                                                                            // ),
                                                                     ),
                                                             ),
                                                     )

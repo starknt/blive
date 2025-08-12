@@ -2,7 +2,11 @@ use crate::{
     components::room_settings_modal::{RoomSettingsModal, RoomSettingsModalEvent},
     core::{
         HttpClient,
-        downloader::{BLiveDownloader, utils::pretty_bytes},
+        downloader::{
+            BLiveDownloader,
+            context::DownloaderEvent,
+            utils::{pretty_bytes, pretty_duration},
+        },
         http_client::{
             room::{LiveRoomInfoData, LiveStatus},
             user::LiveUserInfo,
@@ -20,51 +24,54 @@ use gpui_component::{
     ActiveTheme as _, ContextModal, Disableable, Icon, IconName, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
+    notification::Notification,
     skeleton::Skeleton,
-    text::Text,
     v_flex,
 };
-use std::{sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 #[derive(Clone, Debug)]
 enum RoomCardEvent {
     LiveStatusChanged(LiveStatus),
-    StatusChanged(RoomCardStatus),
-    StartRecording,
-    StopRecording,
+    StartRecording(bool),
+    StopRecording(bool),
     WillDeleted(u64),
 }
 
 #[derive(Clone, Default, PartialEq, Debug)]
 pub enum RoomCardStatus {
     #[default]
-    Waiting,
-    Recording(f32),
-    Error(String),
+    WaitLiveStreaming,
+    LiveRecording,
 }
 
-impl std::fmt::Display for RoomCardStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RoomCardStatus::Waiting => write!(f, "等待中"),
-            RoomCardStatus::Recording(speed) => {
-                write!(f, "录制中: {}/s", pretty_bytes((speed * 1024.0) as u64))
-            }
-            RoomCardStatus::Error(err) => write!(f, "错误: {err}"),
-        }
-    }
+#[derive(Clone, PartialEq, Debug)]
+enum DownloaderStatus {
+    Started {
+        file_path: String,
+    },
+    Completed {
+        file_path: String,
+        file_size: u64,
+        duration: u64,
+    },
+    Error {
+        cause: String,
+    },
 }
 
 pub struct RoomCard {
     client: HttpClient,
+    pub settings_modal: Entity<RoomSettingsModal>,
     pub(crate) status: RoomCardStatus,
     pub(crate) room_info: Option<LiveRoomInfoData>,
     pub(crate) user_info: Option<LiveUserInfo>,
     pub(crate) settings: RoomSettings,
-    pub downloader: Option<Arc<BLiveDownloader>>,
     pub user_stop: bool,
-    pub settings_modal: Entity<RoomSettingsModal>,
     _subscriptions: Vec<Subscription>,
+    pub downloader: Option<Arc<BLiveDownloader>>,
+    downloader_status: Option<DownloaderStatus>,
+    downloader_speed: Option<f32>,
 }
 
 impl RoomCard {
@@ -84,6 +91,8 @@ impl RoomCard {
             room_info: None,
             user_info: None,
             downloader: None,
+            downloader_status: None,
+            downloader_speed: None,
         }
     }
 
@@ -99,60 +108,52 @@ impl RoomCard {
         let task_client = client.clone();
         cx.new(|cx| {
             cx.spawn(async move |this: WeakEntity<RoomCard>, cx| {
-                cx.background_executor().timer(Duration::from_secs(2)).await;
+                loop {
+                    if !this.is_upgradable() {
+                        break;
+                    }
 
-                while let Some(this) = this.upgrade() {
-                    let (room_data, user_data) = futures::join!(
-                        task_client.get_live_room_info(room_id),
-                        task_client.get_live_room_user_info(room_id)
-                    );
+                    if let Some(this) = this.upgrade() {
+                        let (room_data, user_data) = futures::join!(
+                            task_client.get_live_room_info(room_id),
+                            task_client.get_live_room_user_info(room_id)
+                        );
 
-                    match (room_data, user_data) {
-                        (Ok(room_info), Ok(user_info)) => {
-                            let _ = this.update(cx, |this, cx| {
-                                let card_room_live_status = this
-                                    .room_info
-                                    .as_ref()
-                                    .map_or(LiveStatus::Offline, |room_info| room_info.live_status);
-                                let now_room_live_status = room_info.live_status;
+                        match (room_data, user_data) {
+                            (Ok(room_info), Ok(user_info)) => {
+                                let _ = this.update(cx, |this, cx| {
+                                    let now_room_live_status = room_info.live_status;
 
-                                this.user_info = Some(user_info.info);
-                                this.room_info = Some(room_info);
+                                    this.user_info = Some(user_info.info);
+                                    this.room_info = Some(room_info);
 
-                                if now_room_live_status != card_room_live_status {
                                     cx.emit(RoomCardEvent::LiveStatusChanged(now_room_live_status));
-                                }
-                                cx.notify();
-                            });
-                        }
-                        (Ok(room_info), Err(_)) => {
-                            let _ = this.update(cx, |this: &mut RoomCard, cx| {
-                                let card_room_live_status = this
-                                    .room_info
-                                    .as_ref()
-                                    .map_or(LiveStatus::Offline, |room_info| room_info.live_status);
-                                let now_room_live_status = room_info.live_status;
-                                this.room_info = Some(room_info);
+                                    cx.notify();
+                                });
+                            }
+                            (Ok(room_info), Err(_)) => {
+                                let _ = this.update(cx, |this: &mut RoomCard, cx| {
+                                    let now_room_live_status = room_info.live_status;
+                                    this.room_info = Some(room_info);
 
-                                if now_room_live_status != card_room_live_status {
                                     cx.emit(RoomCardEvent::LiveStatusChanged(now_room_live_status));
-                                }
-                                cx.notify();
-                            });
-                        }
-                        (Err(_), Ok(user_info)) => {
-                            let _ = this.update(cx, |this, cx| {
-                                this.user_info = Some(user_info.info);
-                                cx.notify();
-                            });
-                        }
-                        (Err(_), Err(_)) => {
-                            // nothing
+                                    cx.notify();
+                                });
+                            }
+                            (Err(_), Ok(user_info)) => {
+                                let _ = this.update(cx, |this, cx| {
+                                    this.user_info = Some(user_info.info);
+                                    cx.notify();
+                                });
+                            }
+                            (Err(_), Err(_)) => {
+                                // nothing
+                            }
                         }
                     }
 
                     cx.background_executor()
-                        .timer(Duration::from_secs(15))
+                        .timer(Duration::from_secs(10))
                         .await;
                 }
             })
@@ -240,6 +241,7 @@ impl RoomCard {
                     },
                 ),
                 cx.subscribe_in(&cx.entity(), window, Self::on_event),
+                cx.subscribe_in(&cx.entity(), window, Self::on_downloader_event),
             ];
 
             Self::new(
@@ -261,6 +263,42 @@ impl RoomCard {
             )
         })
     }
+}
+
+impl RoomCard {
+    fn on_delete(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let room_id = self.settings.room_id;
+        log_user_action("删除房间", Some(&format!("房间号: {room_id}")));
+
+        if let Some(downloader) = self.downloader.take() {
+            cx.foreground_executor()
+                .spawn(async move {
+                    downloader.stop().await;
+                })
+                .detach();
+        }
+
+        cx.emit(RoomCardEvent::WillDeleted(room_id));
+    }
+
+    fn on_open_settings(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let room_id = self.settings.room_id;
+        log_user_action("打开房间设置", Some(&format!("房间号: {room_id}")));
+
+        let setting_modal = self.settings_modal.clone();
+        window.open_modal(cx, move |modal, _, _| {
+            modal
+                .rounded_lg()
+                .title(
+                    div()
+                        .font_bold()
+                        .text_2xl()
+                        .child("房间设置".into_element()),
+                )
+                .overlay_closable(false)
+                .child(setting_modal.clone())
+        });
+    }
 
     fn on_event(
         &mut self,
@@ -271,130 +309,116 @@ impl RoomCard {
     ) {
         match event {
             RoomCardEvent::LiveStatusChanged(status) => {
-                self.status = match status {
-                    LiveStatus::Live => RoomCardStatus::Recording(0.0),
-                    _ => RoomCardStatus::Waiting,
-                };
-                cx.emit(RoomCardEvent::StatusChanged(self.status.clone()));
-            }
-            RoomCardEvent::StartRecording => {
-                self.user_stop = false;
+                match status {
+                    LiveStatus::Live => {
+                        cx.emit(RoomCardEvent::StartRecording(false));
+                    }
+                    LiveStatus::Carousel | LiveStatus::Offline => {
+                        cx.emit(RoomCardEvent::StopRecording(false))
+                    }
+                }
 
-                let live_status = match &self.room_info {
+                cx.notify();
+            }
+            RoomCardEvent::StartRecording(user_action) => {
+                if *user_action {
+                    self.user_stop = false;
+                }
+
+                if self.user_stop || self.downloader.is_some() {
+                    return;
+                }
+
+                // if self.downloader.is_some() && !*user_action {
+                //     let record_dir = self.settings.record_dir.clone().unwrap_or_default();
+                //     let downloader = self.downloader.clone().unwrap();
+                //     return cx
+                //         .spawn(async move |_, cx| {
+                //             let _ = downloader.restart(cx, &record_dir).await;
+                //         })
+                //         .detach();
+                // }
+
+                let live_status: LiveStatus = match &self.room_info {
                     Some(room_info) => room_info.live_status,
                     None => LiveStatus::Offline,
                 };
 
                 match live_status {
                     LiveStatus::Live => {
-                        if self.status != RoomCardStatus::Waiting {
-                            // 如果已经在录制中，则不重复开始
-                            return;
-                        }
+                        self.downloader_speed = None;
+                        self.downloader_status = None;
+                        self.status = RoomCardStatus::LiveRecording;
 
-                        self.status = RoomCardStatus::Recording(0.0);
-                        cx.emit(RoomCardEvent::StatusChanged(self.status.clone()));
+                        let room_info = self.room_info.clone().unwrap_or_default();
+                        let user_info = self.user_info.clone().unwrap_or_default();
+                        let client = self.client.clone();
+                        let setting = self.settings.clone();
+
+                        let downloader = Arc::new(BLiveDownloader::new(
+                            room_info,
+                            user_info,
+                            setting.quality.unwrap_or_default(),
+                            setting.format.unwrap_or_default(),
+                            setting.codec.unwrap_or_default(),
+                            setting.strategy.unwrap_or_default(),
+                            client,
+                            this.downgrade(),
+                        ));
+
+                        self.downloader = Some(downloader.clone());
+                        cx.update_global(|state: &mut AppState, _| {
+                            state.downloaders.push(downloader.clone());
+                        });
+
+                        cx.spawn(async move |_, cx| {
+                            match downloader
+                                .start(cx, &setting.record_dir.unwrap_or_default())
+                                .await
+                            {
+                                Ok(_) => {
+                                    // 下载成功完成，状态会通过事件回调自动更新
+                                }
+                                Err(e) => {
+                                    // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
+                                    eprintln!("下载器启动失败: {e}");
+                                }
+                            }
+                        })
+                        .detach();
                     }
-                    _ => {
-                        self.status = RoomCardStatus::Error("房间未开播".to_string());
+                    LiveStatus::Carousel | LiveStatus::Offline => {
+                        cx.emit(RoomCardEvent::StopRecording(false));
                     }
                 }
 
                 cx.notify();
             }
-            RoomCardEvent::StopRecording => {
-                let downloader = self.downloader.take();
-                if downloader.is_some() {
+            RoomCardEvent::StopRecording(user_action) => {
+                self.user_stop = *user_action;
+                self.downloader_speed = None;
+                self.status = RoomCardStatus::WaitLiveStreaming;
+
+                if let Some(downloader) = self.downloader.take() {
+                    let room_id = self.settings.room_id;
+
                     cx.foreground_executor()
                         .spawn(async move {
-                            if let Some(downloader) = downloader {
-                                downloader.stop().await;
-                            }
+                            downloader.stop().await;
                         })
                         .detach();
-
-                    let room_id = self.settings.room_id;
 
                     cx.update_global(|state: &mut AppState, _| {
                         state
                             .downloaders
                             .retain(|d| d.context.room_info.room_id != room_id);
                     });
+
+                    self.downloader = None;
                 }
 
-                self.status = RoomCardStatus::Waiting;
-                self.user_stop = true;
-                cx.notify();
-            }
-            RoomCardEvent::StatusChanged(status) => {
-                match status {
-                    RoomCardStatus::Recording(_speed) => {
-                        if !self.user_stop && self.downloader.is_none() {
-                            let room_info = self.room_info.clone();
-                            let user_info = self.user_info.clone();
-                            let client = self.client.clone();
-                            let setting = self.settings.clone();
-
-                            let downloader = Arc::new(BLiveDownloader::new(
-                                room_info.unwrap(),
-                                user_info.unwrap(),
-                                setting.quality.unwrap_or_default(),
-                                setting.format.unwrap_or_default(),
-                                setting.codec.unwrap_or_default(),
-                                setting.strategy.unwrap_or_default(),
-                                client,
-                                this.downgrade(),
-                            ));
-
-                            self.downloader = Some(downloader.clone());
-
-                            cx.spawn(async move |_, cx| {
-                                let _ = cx.update_global(|state: &mut AppState, _| {
-                                    state.downloaders.push(downloader.clone());
-                                });
-
-                                match downloader
-                                    .start(cx, &setting.record_dir.unwrap_or_default())
-                                    .await
-                                {
-                                    Ok(_) => {
-                                        // 下载成功完成，状态会通过事件回调自动更新
-                                    }
-                                    Err(e) => {
-                                        // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
-                                        eprintln!("下载器启动失败: {e}");
-                                    }
-                                }
-                            })
-                            .detach();
-                        }
-                    }
-                    RoomCardStatus::Waiting => {
-                        self.status = RoomCardStatus::Waiting;
-                        let downloader = self.downloader.take();
-                        if downloader.is_some() {
-                            cx.foreground_executor()
-                                .spawn(async move {
-                                    if let Some(downloader) = downloader {
-                                        downloader.stop().await;
-                                    }
-                                })
-                                .detach();
-
-                            let room_id = self.settings.room_id;
-                            cx.update_global(|state: &mut AppState, _| {
-                                state
-                                    .downloaders
-                                    .retain(|d| d.context.room_info.room_id != room_id);
-                            });
-                        }
-
-                        cx.notify();
-                    }
-                    RoomCardStatus::Error(_err) => {
-                        // 错误
-                    }
-                }
+                // 刷新窗口
+                cx.refresh_windows();
             }
             RoomCardEvent::WillDeleted(room_id) => {
                 cx.update_global(|state: &mut AppState, _| {
@@ -411,44 +435,60 @@ impl RoomCard {
         }
     }
 
-    fn on_delete(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        let room_id = self.settings.room_id;
-        log_user_action("删除房间", Some(&format!("房间号: {room_id}")));
-
-        if let Some(downloader) = self.downloader.take() {
-            cx.foreground_executor()
-                .spawn(async move {
-                    downloader.stop().await;
-                })
-                .detach();
+    fn on_downloader_event(
+        &mut self,
+        _: &Entity<Self>,
+        event: &DownloaderEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            DownloaderEvent::Started { file_path } => {
+                self.downloader_status = Some(DownloaderStatus::Started {
+                    file_path: file_path.to_owned(),
+                });
+                self.downloader_speed = None;
+                window
+                    .push_notification(Notification::success(format!("开始录制 {file_path}")), cx);
+            }
+            DownloaderEvent::Progress { speed } => {
+                self.downloader_speed = Some(*speed);
+            }
+            DownloaderEvent::Completed {
+                file_path,
+                file_size,
+                duration,
+            } => {
+                self.downloader_status = Some(DownloaderStatus::Completed {
+                    file_path: file_path.to_owned(),
+                    file_size: *file_size,
+                    duration: *duration,
+                });
+                self.downloader_speed = None;
+                cx.emit(RoomCardEvent::StopRecording(false));
+            }
+            DownloaderEvent::Reconnecting { .. } => {
+                // self.downloader_status = Some(DownloaderStatus::Reconnecting {
+                //     attempt: *attempt,
+                //     delay_secs: *delay_secs,
+                // });
+            }
+            DownloaderEvent::Error { cause } => {
+                // 这里应该只致命错误
+                self.downloader_status = Some(DownloaderStatus::Error {
+                    cause: cause.to_owned(),
+                });
+                self.downloader_speed = None;
+            }
         }
 
-        cx.emit(RoomCardEvent::WillDeleted(room_id));
-    }
-}
-
-impl RoomCard {
-    fn on_open_settings(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let room_id = self.settings.room_id;
-        log_user_action("打开房间设置", Some(&format!("房间号: {room_id}")));
-
-        let setting_modal = self.settings_modal.clone();
-        window.open_modal(cx, move |modal, _, _| {
-            modal
-                .rounded_lg()
-                .title(
-                    div()
-                        .font_bold()
-                        .text_2xl()
-                        .child(Text::String("房间设置".into())),
-                )
-                .overlay_closable(false)
-                .child(setting_modal.clone())
-        });
+        cx.notify();
     }
 }
 
 impl EventEmitter<RoomCardEvent> for RoomCard {}
+
+impl EventEmitter<DownloaderEvent> for RoomCard {}
 
 impl Render for RoomCard {
     fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -563,9 +603,9 @@ impl Render for RoomCard {
             .rounded_lg()
             .p_4()
             .border(px(1.0))
-            .border_color(match self.status {
-                RoomCardStatus::Error(_) => gpui::rgb(0xef4444),
-                _ => cx.theme().border.into(),
+            .border_color(cx.theme().border)
+            .when(matches!(self.downloader_status, Some(DownloaderStatus::Error { .. })), |div| {
+                div.border_color(cx.theme().red)
             })
             .child(
                 v_flex()
@@ -602,9 +642,9 @@ impl Render for RoomCard {
                                                 h_flex()
                                                     .gap_2()
                                                     .child(room_info.title.clone().into_element())
-                                                    .child(div().font_bold().child(Text::String(
-                                                        user_info.uname.clone().into(),
-                                                    ))),
+                                                    .child(div().font_bold().child(
+                                                        user_info.uname.clone().into_element(),
+                                                    )),
                                             )
                                             .child(
                                                 format!(
@@ -627,17 +667,17 @@ impl Render for RoomCard {
                                                             _ => gpui::rgb(0x6b7280),
                                                         },
                                                     ))
-                                                    .child(Text::String(
+                                                    .child(
                                                         match room_info.live_status {
-                                                            LiveStatus::Live => "直播中".into(),
-                                                            LiveStatus::Carousel => "轮播中".into(),
-                                                            LiveStatus::Offline => "未开播".into(),
-                                                        },
-                                                    ))
+                                                            LiveStatus::Live => "直播中".into_element(),
+                                                            LiveStatus::Carousel => "轮播中".into_element(),
+                                                            LiveStatus::Offline => "未开播".into_element(),
+                                                        }
+                                                    )
                                                     .when(
                                                         matches!(
                                                             self.status,
-                                                            RoomCardStatus::Recording(_)
+                                                            RoomCardStatus::LiveRecording
                                                         ),
                                                         |div| {
                                                             div.child(
@@ -648,19 +688,23 @@ impl Render for RoomCard {
                                                                 .into_element(),
                                                             )
                                                         },
-                                                    ),
+                                                    )
+                                                    .when(matches!(room_info.live_status, LiveStatus::Live), |div| div.child(format!("分区: {}", room_info.area_name).into_element()))
+                                                    .when(matches!(room_info.live_status, LiveStatus::Live), |div| div.child(format!("开始时间: {}", room_info.live_time).into_element()))
                                             ),
                                     ),
                             )
                             .child(
                                 h_flex()
                                     .gap_2()
-                                    .child({
-                                        if matches!(
+                                    .when(
+                                        matches!(
                                             self.status,
-                                            RoomCardStatus::Recording(_) | RoomCardStatus::Waiting
-                                        ) {
-                                            h_flex().flex_1().children(vec![
+                                            RoomCardStatus::LiveRecording
+                                                | RoomCardStatus::WaitLiveStreaming
+                                        ),
+                                        |div| {
+                                            div.child(h_flex().flex_1().children(vec![
                                                 Button::new("record")
                                                     .primary()
                                                     .map(|this| {
@@ -687,57 +731,41 @@ impl Render for RoomCard {
                                                         LiveStatus::Live
                                                     ))
                                                     .label(match &self.status {
-                                                        RoomCardStatus::Waiting => {
-                                                            "开始录制".into()
+                                                        RoomCardStatus::WaitLiveStreaming => {
+                                                            "开始录制"
                                                         }
-                                                        RoomCardStatus::Recording(_) => {
-                                                            "停止录制".into()
-                                                        }
-                                                        RoomCardStatus::Error(err) => {
-                                                            format!("错误: {err}")
+                                                        RoomCardStatus::LiveRecording => {
+                                                            "停止录制"
                                                         }
                                                     })
                                                     .on_click(cx.listener(|card, _, _, cx| {
                                                         let room_id = card.settings.room_id;
                                                         match &card.status {
-                                                            RoomCardStatus::Waiting => {
+                                                            RoomCardStatus::WaitLiveStreaming => {
                                                                 log_user_action(
                                                                     "开始录制",
                                                                     Some(&format!(
                                                                         "房间号: {room_id}"
                                                                     )),
                                                                 );
-                                                                cx.emit(
-                                                                    RoomCardEvent::StartRecording,
-                                                                );
+
+                                                                cx.emit(RoomCardEvent::StartRecording(true));
                                                             }
-                                                            RoomCardStatus::Recording(_) => {
+                                                            RoomCardStatus::LiveRecording => {
                                                                 log_user_action(
                                                                     "停止录制",
                                                                     Some(&format!(
                                                                         "房间号: {room_id}"
                                                                     )),
                                                                 );
-                                                                cx.emit(
-                                                                    RoomCardEvent::StopRecording,
-                                                                );
-                                                            }
-                                                            RoomCardStatus::Error(_) => {
-                                                                log_user_action(
-                                                                    "重试录制",
-                                                                    Some(&format!(
-                                                                        "房间号: {room_id}"
-                                                                    )),
-                                                                );
+
+                                                                cx.emit(RoomCardEvent::StopRecording(true));
                                                             }
                                                         };
-                                                        cx.notify();
                                                     })),
-                                            ])
-                                        } else {
-                                            h_flex().flex_1()
-                                        }
-                                    })
+                                            ]))
+                                        },
+                                    )
                                     .child(
                                         Button::new("settings")
                                             .primary()
@@ -763,42 +791,23 @@ impl Render for RoomCard {
                         h_flex()
                             .gap_x_4()
                             .items_center()
-                            .child(Text::String(
-                                format!("分区: {}", room_info.area_name).into(),
-                            ))
-                            .child({
-                                if matches!(self.status, RoomCardStatus::Recording(_)) {
-                                    Text::String(
-                                        format!("直播开始时间: {}", room_info.live_time).into(),
-                                    )
-                                } else {
-                                    Text::String("".into())
-                                }
-                            }),
-                    )
-                    .children({
-                        if matches!(self.status, RoomCardStatus::Recording(_)) {
-                            vec![Text::String(self.status.to_string().into()).into_element()]
-                        } else {
-                            vec![]
-                        }
-                    })
-                    .children({
-                        if matches!(self.status, RoomCardStatus::Error(_)) {
-                            vec![
-                                Text::String(
-                                    match &self.status {
-                                        RoomCardStatus::Error(err) => err.clone(),
-                                        _ => String::new(),
+                            .when_some(self.downloader_status.clone(), |div, status| {
+                                match status {
+                                    DownloaderStatus::Started { ref file_path } => {
+                                        div.child(format!("录制中: {}", Path::new(file_path).file_name().unwrap_or_default().to_string_lossy()).into_element())
                                     }
-                                    .into(),
-                                )
-                                .into_element(),
-                            ]
-                        } else {
-                            vec![]
-                        }
-                    }),
+                                    DownloaderStatus::Completed { ref file_path, ref file_size, ref duration } => {
+                                        div.child(format!("录制完成: {} 大小: {} 时长: {}", file_path, pretty_bytes(*file_size), pretty_duration(*duration)).into_element())
+                                    }
+                                    DownloaderStatus::Error { ref cause } => {
+                                        div.child(format!("录制失败: {}", cause).into_element())
+                                    }
+                                }
+                            })
+                            .when_some(self.downloader_speed, |div, speed| {
+                                div.child(format!("{speed:.2} Kb/s").into_element())
+                            })
+                    ),
             )
     }
 }

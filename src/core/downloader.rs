@@ -6,7 +6,7 @@ pub mod stats;
 pub mod template;
 pub mod utils;
 
-use crate::components::{RoomCard, RoomCardStatus};
+use crate::components::RoomCard;
 use crate::core::downloader::error::DownloaderError;
 use crate::core::downloader::template::DownloaderFilenameTemplate;
 use crate::core::downloader::{http_hls::HttpHlsDownloader, http_stream::HttpStreamDownloader};
@@ -43,7 +43,11 @@ pub enum DownloadEvent {
         duration_ms: u64,
     },
     /// 下载完成
-    Completed { file_path: String, file_size: u64 },
+    Completed {
+        file_path: String,
+        file_size: u64,
+        duration: u64,
+    },
     /// 下载错误
     Error { error: DownloaderError },
     /// 网络重连中
@@ -246,14 +250,14 @@ impl BLiveDownloader {
         let attempt = manager.current_attempt;
         let delay = manager.calculate_delay();
 
-        self.update_card_status(
-            cx,
-            RoomCardStatus::Error(format!(
-                "网络中断，第{}次重连 ({}秒后)",
-                attempt,
-                delay.as_secs()
-            )),
-        );
+        // self.update_card_status(
+        //     cx,
+        //     RoomCardStatus::Error(format!(
+        //         "网络中断，第{}次重连 ({}秒后)",
+        //         attempt,
+        //         delay.as_secs()
+        //     )),
+        // );
 
         // 发送重连事件
         self.context.push_event(DownloadEvent::Reconnecting {
@@ -281,7 +285,6 @@ impl BLiveDownloader {
                 manager.reset_attempts();
 
                 eprintln!("✅ 重连成功！");
-                self.update_card_status(cx, RoomCardStatus::Recording(0.0));
                 Ok(())
             }
             Err(e) => {
@@ -312,8 +315,6 @@ impl BLiveDownloader {
                     stats.reconnect_count = 0;
                 });
 
-                self.update_card_status(cx, RoomCardStatus::Recording(0.0));
-
                 // 如果启用自动重连，启动监控
                 if self.is_auto_reconnect() {
                     self.monitor_download_status(cx, record_dir).await?;
@@ -329,7 +330,7 @@ impl BLiveDownloader {
                 } else {
                     // 非网络错误，直接返回
                     eprintln!("非网络错误，停止重连: {e}");
-                    self.update_card_status(cx, RoomCardStatus::Error(format!("录制失败: {e}")));
+                    // self.update_card_status(cx, RoomCardStatus::Error(format!("录制失败: {e}")));
 
                     self.context.push_event(DownloadEvent::Error {
                         error: DownloaderError::InvalidRecordingConfig {
@@ -451,6 +452,11 @@ impl BLiveDownloader {
 
         Ok(())
     }
+
+    pub async fn restart(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
+        self.stop().await;
+        self.start(cx, record_dir).await
+    }
 }
 
 impl BLiveDownloader {
@@ -483,10 +489,6 @@ impl BLiveDownloader {
             is_auto_reconnect: TryLock::new(true),
             reconnect_manager: TryLock::new(reconnect_manager),
         }
-    }
-
-    fn update_card_status(&self, cx: &mut AsyncApp, status: RoomCardStatus) {
-        self.context.update_card_status(cx, status);
     }
 
     fn is_auto_reconnect(&self) -> bool {

@@ -8,15 +8,40 @@ use gpui::{AsyncApp, WeakEntity};
 use try_lock::TryLock;
 
 use crate::{
-    components::{RoomCard, RoomCardStatus},
+    components::RoomCard,
     core::{
         DownloadStatus, HttpClient,
-        downloader::{DownloadEvent, DownloadStats, utils},
+        downloader::{
+            DownloadEvent, DownloadStats,
+            utils::{self, pretty_bytes, pretty_duration},
+        },
         http_client::{room::LiveRoomInfoData, user::LiveUserInfo},
     },
     log_recording_error, log_recording_start, log_recording_stop,
     settings::{Quality, Strategy, StreamCodec, VideoContainer},
 };
+
+#[derive(Debug, Clone)]
+pub enum DownloaderEvent {
+    Started {
+        file_path: String,
+    },
+    Progress {
+        speed: f32,
+    },
+    Reconnecting {
+        attempt: u32,
+        delay_secs: u64,
+    },
+    Completed {
+        file_path: String,
+        file_size: u64,
+        duration: u64,
+    },
+    Error {
+        cause: String,
+    },
+}
 
 #[derive(Debug, Clone)]
 pub struct DownloadConfig {
@@ -115,11 +140,10 @@ impl DownloaderContext {
         self.status.try_lock().unwrap().clone()
     }
 
-    pub fn update_card_status(&self, cx: &mut AsyncApp, status: RoomCardStatus) {
+    pub fn emit_downloader_event(&self, cx: &mut AsyncApp, event: DownloaderEvent) {
         if let Some(entity) = self.entity.upgrade() {
-            let _ = entity.update(cx, |card, cx| {
-                card.status = status;
-                cx.notify();
+            let _ = entity.update(cx, |_, cx| {
+                cx.emit(event);
             });
         }
     }
@@ -156,8 +180,13 @@ impl DownloaderContext {
 
         // 更新UI状态并处理下载器状态
         match &event {
-            DownloadEvent::Started { .. } => {
-                self.update_card_status(cx, RoomCardStatus::Recording(0.0));
+            DownloadEvent::Started { file_path } => {
+                self.emit_downloader_event(
+                    cx,
+                    DownloaderEvent::Started {
+                        file_path: file_path.to_owned(),
+                    },
+                );
                 // 确保运行状态为true
                 self.set_running(true);
             }
@@ -165,21 +194,25 @@ impl DownloaderContext {
                 download_speed_kbps,
                 ..
             } => {
-                self.update_card_status(cx, RoomCardStatus::Recording(*download_speed_kbps));
+                self.emit_downloader_event(
+                    cx,
+                    DownloaderEvent::Progress {
+                        speed: *download_speed_kbps,
+                    },
+                );
                 // 更新统计信息
                 self.update_stats(|stats| {
                     stats.download_speed_kbps = *download_speed_kbps;
                 });
             }
             DownloadEvent::Error { error } => {
-                let status = if error.is_recoverable() {
-                    RoomCardStatus::Error(format!("网络异常，正在重连: {error}"))
-                } else {
-                    // 如果是不可恢复的错误，停止下载器, 等待重新连接
-                    self.set_status(DownloadStatus::Error(error.clone()));
-                    RoomCardStatus::Error(format!("录制失败, 等待重新连接: {error}"))
-                };
-                self.update_card_status(cx, status);
+                // let status = if error.is_recoverable() {
+                //     // RoomCardStatus::Error(format!("网络异常，正在重连: {error}"))
+                // } else {
+                //     // 如果是不可恢复的错误，停止下载器, 等待重新连接
+                //     self.set_status(DownloadStatus::Error(error.clone()));
+                //     // RoomCardStatus::Error(format!("录制失败, 等待重新连接: {error}"))
+                // };
 
                 // 更新错误统计
                 self.update_stats(|stats| {
@@ -190,23 +223,32 @@ impl DownloaderContext {
                 attempt,
                 delay_secs,
             } => {
-                self.update_card_status(
+                self.emit_downloader_event(
                     cx,
-                    RoomCardStatus::Error(format!(
-                        "网络中断，第{attempt}次重连 ({delay_secs}秒后)"
-                    )),
+                    DownloaderEvent::Reconnecting {
+                        attempt: *attempt,
+                        delay_secs: *delay_secs,
+                    },
                 );
 
                 // 更新重连统计
                 self.update_stats(|stats| {
                     stats.reconnect_count = *attempt;
                 });
-
-                // 重连期间保持运行状态
-                // self.set_running(true);
             }
-            DownloadEvent::Completed { file_size, .. } => {
-                self.update_card_status(cx, RoomCardStatus::Waiting);
+            DownloadEvent::Completed {
+                file_size,
+                file_path,
+                duration,
+            } => {
+                self.emit_downloader_event(
+                    cx,
+                    DownloaderEvent::Completed {
+                        file_path: file_path.to_owned(),
+                        file_size: *file_size,
+                        duration: *duration,
+                    },
+                );
 
                 // 更新完成统计
                 self.update_stats(|stats| {
@@ -266,14 +308,16 @@ impl DownloaderContext {
             DownloadEvent::Completed {
                 file_path,
                 file_size,
+                duration,
             } => {
-                let mb_size = *file_size as f64 / 1024.0 / 1024.0;
                 log_recording_stop(self.room_info.room_id);
+
                 tracing::info!(
-                    "录制完成 - 房间: {}, 文件: {}, 大小: {:.2}MB",
+                    "录制完成 - 房间: {}, 文件: {}, 大小: {:.2}MB, 时长: {}秒",
                     self.room_info.room_id,
                     file_path,
-                    mb_size
+                    pretty_bytes(*file_size),
+                    pretty_duration(*duration)
                 );
             }
         }

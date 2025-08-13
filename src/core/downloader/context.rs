@@ -29,10 +29,7 @@ pub enum DownloaderEvent {
     Progress {
         speed: f32,
     },
-    Reconnecting {
-        attempt: u32,
-        delay_secs: u64,
-    },
+    Reconnecting,
     Completed {
         file_path: String,
         file_size: u64,
@@ -206,35 +203,12 @@ impl DownloaderContext {
                 });
             }
             DownloadEvent::Error { error } => {
-                // let status = if error.is_recoverable() {
-                //     // RoomCardStatus::Error(format!("网络异常，正在重连: {error}"))
-                // } else {
-                //     // 如果是不可恢复的错误，停止下载器, 等待重新连接
-                //     self.set_status(DownloadStatus::Error(error.clone()));
-                //     // RoomCardStatus::Error(format!("录制失败, 等待重新连接: {error}"))
-                // };
-
-                // 更新错误统计
-                self.update_stats(|stats| {
-                    stats.last_error = Some(error.to_string());
-                });
+                if error.is_recoverable() {
+                    self.push_event(DownloadEvent::Reconnecting);
+                }
             }
-            DownloadEvent::Reconnecting {
-                attempt,
-                delay_secs,
-            } => {
-                self.emit_downloader_event(
-                    cx,
-                    DownloaderEvent::Reconnecting {
-                        attempt: *attempt,
-                        delay_secs: *delay_secs,
-                    },
-                );
-
-                // 更新重连统计
-                self.update_stats(|stats| {
-                    stats.reconnect_count = *attempt;
-                });
+            DownloadEvent::Reconnecting => {
+                self.emit_downloader_event(cx, DownloaderEvent::Reconnecting);
             }
             DownloadEvent::Completed {
                 file_size,
@@ -296,14 +270,8 @@ impl DownloaderContext {
                     log_recording_error(self.room_info.room_id, &format!("录制失败: {error}"));
                 }
             }
-            DownloadEvent::Reconnecting {
-                attempt,
-                delay_secs,
-            } => {
-                log_recording_error(
-                    self.room_info.room_id,
-                    &format!("网络中断，第{attempt}次重连 ({delay_secs}秒后)"),
-                );
+            DownloadEvent::Reconnecting => {
+                log_recording_error(self.room_info.room_id, "网络中断，正在重连");
             }
             DownloadEvent::Completed {
                 file_path,

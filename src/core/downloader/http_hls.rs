@@ -135,46 +135,35 @@ impl Downloader for HttpHlsDownloader {
                                         duration: start_time.elapsed().as_secs_f64() as u64,
                                     });
                                 }
-                                FfmpegEvent::Log(level, msg) => {
+                                FfmpegEvent::Log(level, message) => {
                                     match level {
                                         ffmpeg_sidecar::event::LogLevel::Fatal => {
                                             context.push_event(DownloadEvent::Error {
-                                                error: DownloaderError::FfmpegRuntimeError {
-                                                    error_type: "Fatal".to_string(),
-                                                    message: msg,
+                                                error: DownloaderError::FfmpegFatalError {
+                                                    message,
                                                 },
                                             });
                                         }
                                         ffmpeg_sidecar::event::LogLevel::Error => {
                                             // 根据错误消息智能分类
-                                            if msg.contains("Connection reset")
-                                                || msg.contains("timeout")
-                                                || msg.contains("No route to host")
-                                                || msg.contains("Connection refused")
+                                            if message.contains("Connection reset")
+                                                || message.contains("timeout")
+                                                || message.contains("No route to host")
+                                                || message.contains("Connection refused")
                                             {
                                                 context.push_event(DownloadEvent::Error {
                                                     error:
-                                                        DownloaderError::network_connection_failed(
-                                                            msg,
-                                                        ),
+                                                        DownloaderError::NetworkConnectionFailed {
+                                                            message,
+                                                        },
                                                 });
-                                            } else if msg.contains("Protocol not found")
-                                                || msg.contains("Invalid data found")
-                                                || msg.contains("Decoder failed")
+                                            } else if message.contains("Protocol not found")
+                                                || message.contains("Invalid data found")
+                                                || message.contains("Decoder failed")
                                             {
                                                 context.push_event(DownloadEvent::Error {
-                                                    error: DownloaderError::StreamEncodingError {
-                                                        codec: "unknown".to_string(),
-                                                        details: msg,
-                                                    },
-                                                });
-                                            } else {
-                                                #[cfg(debug_assertions)]
-                                                context.push_event(DownloadEvent::Error {
-                                                    error: DownloaderError::FfmpegRuntimeError {
-                                                        error_type: "Error".to_string(),
-                                                        message: msg,
-                                                    },
+                                                    error:
+                                                        DownloaderError::NoSuitableStreamProtocol,
                                                 });
                                             }
                                         }

@@ -28,7 +28,12 @@ use gpui_component::{
     skeleton::Skeleton,
     v_flex,
 };
-use std::{path::Path, sync::Arc, time::Duration};
+use rand::Rng;
+use std::{
+    path::Path,
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
+};
 
 #[derive(Clone, Debug)]
 enum RoomCardEvent {
@@ -60,6 +65,46 @@ enum DownloaderStatus {
     },
 }
 
+#[derive(Debug)]
+struct ReconnectManager {
+    current_attempt: u32,
+    max_attempts: u32,
+    base_delay: Duration,
+    max_delay: Duration,
+    last_reconnect_time: Option<std::time::Instant>,
+}
+
+impl ReconnectManager {
+    fn new(max_attempts: u32, base_delay: Duration, max_delay: Duration) -> Self {
+        Self {
+            current_attempt: 0,
+            max_attempts,
+            base_delay,
+            max_delay,
+            last_reconnect_time: None,
+        }
+    }
+
+    fn should_reconnect(&self) -> bool {
+        self.current_attempt < self.max_attempts
+    }
+
+    fn increment_attempt(&mut self) {
+        self.current_attempt += 1;
+        self.last_reconnect_time = Some(std::time::Instant::now());
+    }
+
+    fn calculate_delay(&self) -> Duration {
+        // 指数退避算法，带随机抖动
+        let exponential_delay = self.base_delay * (2_u32.pow(self.current_attempt.min(10)));
+        let jitter = rand::rng().random_range(0.8..1.2);
+
+        let delay = Duration::from_secs_f64(exponential_delay.as_secs_f64() * jitter);
+
+        delay.min(self.max_delay)
+    }
+}
+
 pub struct RoomCard {
     client: HttpClient,
     pub settings_modal: Entity<RoomSettingsModal>,
@@ -72,6 +117,8 @@ pub struct RoomCard {
     pub downloader: Option<Arc<BLiveDownloader>>,
     downloader_status: Option<DownloaderStatus>,
     downloader_speed: Option<f32>,
+    reconnect_manager: ReconnectManager,
+    reconnecting: Arc<AtomicBool>,
 }
 
 impl RoomCard {
@@ -93,6 +140,12 @@ impl RoomCard {
             downloader: None,
             downloader_status: None,
             downloader_speed: None,
+            reconnect_manager: ReconnectManager::new(
+                u32::MAX,
+                Duration::from_secs(1),
+                Duration::from_secs(30),
+            ),
+            reconnecting: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -329,16 +382,6 @@ impl RoomCard {
                     return;
                 }
 
-                // if self.downloader.is_some() && !*user_action {
-                //     let record_dir = self.settings.record_dir.clone().unwrap_or_default();
-                //     let downloader = self.downloader.clone().unwrap();
-                //     return cx
-                //         .spawn(async move |_, cx| {
-                //             let _ = downloader.restart(cx, &record_dir).await;
-                //         })
-                //         .detach();
-                // }
-
                 let live_status: LiveStatus = match &self.room_info {
                     Some(room_info) => room_info.live_status,
                     None => LiveStatus::Offline,
@@ -467,14 +510,28 @@ impl RoomCard {
                 self.downloader_speed = None;
                 cx.emit(RoomCardEvent::StopRecording(false));
             }
-            DownloaderEvent::Reconnecting { .. } => {
-                // self.downloader_status = Some(DownloaderStatus::Reconnecting {
-                //     attempt: *attempt,
-                //     delay_secs: *delay_secs,
-                // });
+            DownloaderEvent::Reconnecting => {
+                if self.reconnecting.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+
+                if self.reconnect_manager.should_reconnect() {
+                    let reconnecting = self.reconnecting.clone();
+                    self.reconnect_manager.increment_attempt();
+                    let delay = self.reconnect_manager.calculate_delay();
+                    let record_dir = self.settings.record_dir.clone().unwrap_or_default();
+                    let downloader = self.downloader.clone().unwrap();
+
+                    cx.spawn(async move |_, cx| {
+                        reconnecting.store(true, std::sync::atomic::Ordering::Relaxed);
+                        cx.background_executor().timer(delay).await;
+                        let _ = downloader.restart(cx, &record_dir).await;
+                        reconnecting.store(false, std::sync::atomic::Ordering::Relaxed);
+                    })
+                    .detach();
+                }
             }
             DownloaderEvent::Error { cause } => {
-                // 这里应该只致命错误
                 self.downloader_status = Some(DownloaderStatus::Error {
                     cause: cause.to_owned(),
                 });
@@ -606,6 +663,9 @@ impl Render for RoomCard {
             .border_color(cx.theme().border)
             .when(matches!(self.downloader_status, Some(DownloaderStatus::Error { .. })), |div| {
                 div.border_color(cx.theme().red)
+            })
+            .when(self.reconnecting.load(std::sync::atomic::Ordering::Relaxed), |div| {
+                div.border_color(cx.theme().warning)
             })
             .child(
                 v_flex()

@@ -98,10 +98,9 @@ impl Downloader for HttpStreamDownloader {
                             Ok(mut response) => {
                                 if !response.status().is_success() {
                                     return context.push_event(DownloadEvent::Error {
-                                        error: DownloaderError::NetworkError(format!(
-                                            "HTTP请求失败: {}",
-                                            response.status()
-                                        )),
+                                        error: DownloaderError::NetworkConnectionFailed {
+                                            message: format!("HTTP请求失败: {}", response.status()),
+                                        },
                                     });
                                 }
 
@@ -166,16 +165,16 @@ impl Downloader for HttpStreamDownloader {
                                                 }
                                                 Err(e) => {
                                                     context.push_event(DownloadEvent::Error {
-                                                        error: DownloaderError::FileSystemError(
-                                                            e.to_string(),
-                                                        ),
+                                                        error: DownloaderError::FileWriteFailed {
+                                                            path: config.output_path.clone(),
+                                                            reason: e.to_string(),
+                                                        },
                                                     });
                                                 }
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!("无法创建输出文件: {e}");
                                         context.push_event(DownloadEvent::Error {
                                             error: DownloaderError::FileCreationFailed {
                                                 path: config.output_path,
@@ -187,9 +186,9 @@ impl Downloader for HttpStreamDownloader {
                             }
                             Err(e) => {
                                 context.push_event(DownloadEvent::Error {
-                                    error: DownloaderError::NetworkError(format!(
-                                        "HTTP请求失败: {e}"
-                                    )),
+                                    error: DownloaderError::NetworkConnectionFailed {
+                                        message: format!("HTTP请求失败: {e}"),
+                                    },
                                 });
                             }
                         }
@@ -260,8 +259,7 @@ impl Downloader for HttpStreamDownloader {
                                         match level {
                                             ffmpeg_sidecar::event::LogLevel::Fatal => {
                                                 context.push_event(DownloadEvent::Error {
-                                                    error: DownloaderError::FfmpegRuntimeError {
-                                                        error_type: "Fatal".to_string(),
+                                                    error: DownloaderError::FfmpegFatalError {
                                                         message: msg,
                                                     },
                                                 });
@@ -274,7 +272,9 @@ impl Downloader for HttpStreamDownloader {
                                                     || msg.contains("Connection refused")
                                                 {
                                                     context.push_event(DownloadEvent::Error {
-                                                        error: DownloaderError::network_connection_failed(msg),
+                                                        error: DownloaderError::NetworkConnectionFailed {
+                                                            message: msg,
+                                                        },
                                                     });
                                                 } else if msg.contains("Protocol not found")
                                                     || msg.contains("Invalid data found")
@@ -282,19 +282,7 @@ impl Downloader for HttpStreamDownloader {
                                                 {
                                                     context.push_event(DownloadEvent::Error {
                                                         error:
-                                                            DownloaderError::StreamEncodingError {
-                                                                codec: "unknown".to_string(),
-                                                                details: msg,
-                                                            },
-                                                    });
-                                                } else {
-                                                    #[cfg(debug_assertions)]
-                                                    context.push_event(DownloadEvent::Error {
-                                                        error:
-                                                            DownloaderError::FfmpegRuntimeError {
-                                                                error_type: "Error".to_string(),
-                                                                message: msg,
-                                                            },
+                                                            DownloaderError::NoSuitableStreamProtocol,
                                                     });
                                                 }
                                             }

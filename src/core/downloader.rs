@@ -26,8 +26,6 @@ use gpui::{AsyncApp, WeakEntity};
 use rand::Rng;
 pub use stats::DownloadStats;
 use std::sync::Mutex;
-use std::time::Duration;
-use try_lock::TryLock;
 
 pub const REFERER: &str = "https://live.bilibili.com/";
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -51,7 +49,7 @@ pub enum DownloadEvent {
     /// 下载错误
     Error { error: DownloaderError },
     /// 网络重连中
-    Reconnecting { attempt: u32, delay_secs: u64 },
+    Reconnecting,
 }
 
 pub trait Downloader {
@@ -87,64 +85,6 @@ pub enum DownloaderType {
 pub struct BLiveDownloader {
     pub context: DownloaderContext,
     downloader: Mutex<Option<DownloaderType>>,
-    max_reconnect_attempts: TryLock<u32>,
-    reconnect_delay: TryLock<Duration>,
-    is_auto_reconnect: TryLock<bool>,
-    reconnect_manager: TryLock<ReconnectManager>,
-}
-
-#[derive(Debug)]
-struct ReconnectManager {
-    current_attempt: u32,
-    max_attempts: u32,
-    base_delay: Duration,
-    max_delay: Duration,
-    last_error: Option<String>,
-    consecutive_successes: u32,
-    last_reconnect_time: Option<std::time::Instant>,
-}
-
-impl ReconnectManager {
-    fn new(max_attempts: u32, base_delay: Duration, max_delay: Duration) -> Self {
-        Self {
-            current_attempt: 0,
-            max_attempts,
-            base_delay,
-            max_delay,
-            last_error: None,
-            consecutive_successes: 0,
-            last_reconnect_time: None,
-        }
-    }
-
-    fn should_reconnect(&self) -> bool {
-        self.current_attempt < self.max_attempts
-    }
-
-    fn increment_attempt(&mut self) {
-        self.current_attempt += 1;
-        self.last_reconnect_time = Some(std::time::Instant::now());
-    }
-
-    fn reset_attempts(&mut self) {
-        self.current_attempt = 0;
-        self.consecutive_successes += 1;
-        self.last_error = None;
-    }
-
-    fn set_error(&mut self, error: String) {
-        self.last_error = Some(error);
-    }
-
-    fn calculate_delay(&self) -> Duration {
-        // 指数退避算法，带随机抖动
-        let exponential_delay = self.base_delay * (2_u32.pow(self.current_attempt.min(10)));
-        let jitter = rand::rng().random_range(0.8..1.2);
-
-        let delay = Duration::from_secs_f64(exponential_delay.as_secs_f64() * jitter);
-
-        delay.min(self.max_delay)
-    }
 }
 
 impl BLiveDownloader {
@@ -238,111 +178,12 @@ impl BLiveDownloader {
         Ok(())
     }
 
-    /// 统一的重连方法
-    async fn attempt_reconnect(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
-        let mut manager = self.reconnect_manager.try_lock().unwrap();
-
-        if !manager.should_reconnect() {
-            return Err(anyhow::anyhow!("已达到最大重连次数"));
-        }
-
-        manager.increment_attempt();
-        let attempt = manager.current_attempt;
-        let delay = manager.calculate_delay();
-
-        // self.update_card_status(
-        //     cx,
-        //     RoomCardStatus::Error(format!(
-        //         "网络中断，第{}次重连 ({}秒后)",
-        //         attempt,
-        //         delay.as_secs()
-        //     )),
-        // );
-
-        // 发送重连事件
-        self.context.push_event(DownloadEvent::Reconnecting {
-            attempt,
-            delay_secs: delay.as_secs(),
-        });
-
-        // 更新统计信息
-        self.context.update_stats(|stats| {
-            stats.reconnect_count = attempt;
-        });
-
-        drop(manager); // 释放锁
-
-        eprintln!("🔄 网络异常，正在尝试重连 (第{attempt}次，等待{delay:?})");
-
-        // 等待延迟时间
-        cx.background_executor().timer(delay).await;
-
-        // 尝试重新启动下载
-        match self.start_download(cx, record_dir).await {
-            Ok(_) => {
-                // 重连成功，重置计数器
-                let mut manager = self.reconnect_manager.try_lock().unwrap();
-                manager.reset_attempts();
-
-                eprintln!("✅ 重连成功！");
-                Ok(())
-            }
-            Err(e) => {
-                // 重连失败，记录错误
-                let mut manager = self.reconnect_manager.try_lock().unwrap();
-                manager.set_error(e.to_string());
-
-                eprintln!("❌ 重连失败: {e}");
-                Err(e)
-            }
-        }
-    }
-
     /// 改进的启动方法
     pub async fn start(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
-        // 重置重连管理器
-        {
-            let mut manager = self.reconnect_manager.try_lock().unwrap();
-            manager.current_attempt = 0;
-            manager.consecutive_successes = 0;
-        }
-
         // 尝试启动下载
         match self.start_download(cx, record_dir).await {
-            Ok(_) => {
-                // 下载成功启动
-                self.context.update_stats(|stats| {
-                    stats.reconnect_count = 0;
-                });
-
-                // 如果启用自动重连，启动监控
-                if self.is_auto_reconnect() {
-                    self.monitor_download_status(cx, record_dir).await?;
-                }
-
-                Ok(())
-            }
-            Err(e) => {
-                // 检查是否为网络错误
-                if Self::is_network_error(&e) {
-                    // 网络错误，尝试重连
-                    self.attempt_reconnect(cx, record_dir).await
-                } else {
-                    // 非网络错误，直接返回
-                    eprintln!("非网络错误，停止重连: {e}");
-                    // self.update_card_status(cx, RoomCardStatus::Error(format!("录制失败: {e}")));
-
-                    self.context.push_event(DownloadEvent::Error {
-                        error: DownloaderError::InvalidRecordingConfig {
-                            field: "stream_url".to_string(),
-                            value: "unavailable".to_string(),
-                            reason: format!("非网络错误: {e}"),
-                        },
-                    });
-
-                    Err(e)
-                }
-            }
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
         }
     }
 
@@ -370,89 +211,6 @@ impl BLiveDownloader {
         }
     }
 
-    /// 改进的状态监控方法
-    pub async fn monitor_download_status(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
-        let mut last_status = self.context.get_status();
-        let mut status_check_interval = Duration::from_secs(1); // 初始检查间隔1秒
-
-        while self.context.is_running() {
-            let current_status = self.context.get_status();
-
-            // 状态发生变化时立即处理
-            if current_status != last_status {
-                match current_status {
-                    DownloadStatus::Error(ref error) => {
-                        let is_network_error =
-                            Self::is_network_error(&anyhow::anyhow!("{}", error));
-
-                        if is_network_error && self.is_auto_reconnect() {
-                            // 停止当前下载器
-                            self.stop().await;
-
-                            // 尝试重连
-                            if let Err(e) = self.attempt_reconnect(cx, record_dir).await {
-                                eprintln!("重连失败，停止监控: {e}");
-                                break;
-                            }
-                        } else {
-                            // 非网络错误，停止监控
-                            eprintln!("非网络错误，停止监控: {error}");
-                            break;
-                        }
-                    }
-                    DownloadStatus::Completed => {
-                        eprintln!("下载完成，停止监控");
-                        break;
-                    }
-                    DownloadStatus::Downloading => {
-                        // 下载正常，更新进度
-                        if let Some(stats) = self.get_download_stats() {
-                            self.context.push_event(DownloadEvent::Progress {
-                                bytes_downloaded: stats.bytes_downloaded,
-                                download_speed_kbps: stats.download_speed_kbps,
-                                duration_ms: stats.duration_ms,
-                            });
-                        }
-
-                        // 下载正常时，可以增加检查间隔
-                        status_check_interval = Duration::from_secs(2);
-                    }
-                    DownloadStatus::Reconnecting => {
-                        // 已经在重连中，等待重连完成
-                        status_check_interval = Duration::from_secs(1);
-                    }
-                    DownloadStatus::NotStarted => {
-                        // 下载器未启动，尝试重新启动
-                        eprintln!("⚠️  下载器未启动，尝试重新启动");
-
-                        if let Err(e) = self.start_download(cx, record_dir).await {
-                            eprintln!("❌ 重新启动失败: {e}");
-                            if Self::is_network_error(&e) {
-                                // 网络错误，尝试重连
-                                if let Err(e) = self.attempt_reconnect(cx, record_dir).await {
-                                    eprintln!("重连失败，停止监控: {e}");
-                                    break;
-                                }
-                            } else {
-                                // 非网络错误，停止监控
-                                break;
-                            }
-                        } else {
-                            eprintln!("✅ 重新启动成功");
-                        }
-                    }
-                }
-
-                last_status = current_status;
-            }
-
-            // 等待后再次检查
-            cx.background_executor().timer(status_check_interval).await;
-        }
-
-        Ok(())
-    }
-
     pub async fn restart(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
         self.stop().await;
         self.start(cx, record_dir).await
@@ -475,135 +233,30 @@ impl BLiveDownloader {
             entity, client, room_info, user_info, strategy, quality, format, codec,
         );
 
-        let reconnect_manager = ReconnectManager::new(
-            u32::MAX,                     // 无限重试
-            Duration::from_secs(1),       // 初始延迟1秒
-            Duration::from_secs(30 * 60), // 最大延迟30分钟
-        );
-
         Self {
             context,
             downloader: Mutex::new(None),
-            max_reconnect_attempts: TryLock::new(u32::MAX),
-            reconnect_delay: TryLock::new(Duration::from_secs(1)),
-            is_auto_reconnect: TryLock::new(true),
-            reconnect_manager: TryLock::new(reconnect_manager),
         }
     }
 
-    fn is_auto_reconnect(&self) -> bool {
-        *self.is_auto_reconnect.try_lock().unwrap()
-    }
-
-    /// 改进的网络错误检测
-    fn is_network_error(error: &anyhow::Error) -> bool {
-        let error_str = error.to_string().to_lowercase();
-
-        // 更精确的网络错误检测
-        let network_keywords = [
-            "network",
-            "connection",
-            "timeout",
-            "dns",
-            "socket",
-            "unreachable",
-            "reset",
-            "refused",
-            "无法连接",
-            "连接被重置",
-            "连接超时",
-            "网络",
-            "请求失败",
-            "无法读取响应体",
-            "connection refused",
-            "connection reset",
-            "no route to host",
-            "host unreachable",
-            "network unreachable",
-            "connection timed out",
-            "read timeout",
-            "write timeout",
-            "tcp connection",
-            "udp connection",
-            "http",
-            "https",
-            "ssl",
-            "tls",
-        ];
-
-        network_keywords
-            .iter()
-            .any(|keyword| error_str.contains(keyword))
-    }
-
     /// 获取下载统计信息
-    fn get_download_stats(&self) -> Option<DownloadStats> {
+    pub fn get_download_stats(&self) -> Option<DownloadStats> {
         Some(self.context.get_stats())
-    }
-
-    /// 设置重连配置
-    pub fn set_reconnect_config(
-        &mut self,
-        max_attempts: u32,
-        initial_delay: Duration,
-        max_delay: Duration,
-        auto_reconnect: bool,
-    ) {
-        let mut max_reconnect_attempts = self.max_reconnect_attempts.try_lock().unwrap();
-        let mut reconnect_delay = self.reconnect_delay.try_lock().unwrap();
-        let mut is_auto_reconnect = self.is_auto_reconnect.try_lock().unwrap();
-        let mut reconnect_manager = self.reconnect_manager.try_lock().unwrap();
-
-        *max_reconnect_attempts = max_attempts;
-        *reconnect_delay = initial_delay;
-        *is_auto_reconnect = auto_reconnect;
-
-        // 更新重连管理器配置
-        reconnect_manager.max_attempts = max_attempts;
-        reconnect_manager.base_delay = initial_delay;
-        reconnect_manager.max_delay = max_delay;
-    }
-
-    /// 获取重连统计信息
-    pub fn get_reconnect_stats(&self) -> (u32, u32, Option<String>) {
-        let manager = self.reconnect_manager.try_lock().unwrap();
-        (
-            manager.current_attempt,
-            manager.consecutive_successes,
-            manager.last_error.clone(),
-        )
     }
 
     /// 获取直播流信息
     async fn get_stream_info(&self) -> Result<LiveRoomStreamUrl> {
-        let mut retry_count = 0;
-
-        loop {
-            match self
-                .context
-                .client
-                .get_live_room_stream_url(
-                    self.context.room_info.room_id,
-                    self.context.quality.to_quality(),
-                )
-                .await
-            {
-                Ok(stream_info) => return Ok(stream_info),
-                Err(e) => {
-                    retry_count += 1;
-                    let delay = {
-                        let manager = self.reconnect_manager.try_lock().unwrap();
-                        manager.calculate_delay()
-                    };
-
-                    eprintln!(
-                        "获取直播流地址失败，正在重试 (第{retry_count}次，等待{delay:?}): {e}"
-                    );
-
-                    // 使用指数退避重试，无限重试
-                    std::thread::sleep(delay);
-                }
-            }
+        match self
+            .context
+            .client
+            .get_live_room_stream_url(
+                self.context.room_info.room_id,
+                self.context.quality.to_quality(),
+            )
+            .await
+        {
+            Ok(stream_info) => Ok(stream_info),
+            Err(e) => Err(e),
         }
     }
 

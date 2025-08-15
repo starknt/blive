@@ -16,8 +16,8 @@ use crate::{
     state::{AppState, ReconnectManager, RoomCardState},
 };
 use gpui::{
-    App, ClickEvent, Entity, EventEmitter, ObjectFit, SharedString, Subscription, WeakEntity,
-    Window, div, img, prelude::*, px,
+    App, ClickEvent, Entity, EntityId, EventEmitter, ObjectFit, SharedString, Subscription,
+    WeakEntity, Window, div, img, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme as _, ContextModal, Disableable, Icon, IconName, StyledExt,
@@ -29,11 +29,12 @@ use gpui_component::{
 use std::{path::Path, sync::Arc, time::Duration};
 
 #[derive(Clone, Debug)]
-enum RoomCardEvent {
+pub enum RoomCardEvent {
     LiveStatusChanged(LiveStatus),
     StartRecording(bool),
     StopRecording(bool),
     WillDeleted(u64),
+    Deleted(EntityId),
 }
 
 #[derive(Clone, Default, PartialEq, Debug)]
@@ -274,7 +275,7 @@ impl RoomCard {
 
     fn on_event(
         &mut self,
-        _this: &Entity<Self>,
+        this: &Entity<Self>,
         event: &RoomCardEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -369,7 +370,7 @@ impl RoomCard {
 
                                 // 检查是否需要重连
                                 let (should_reconnect, reconnect_config) = cx
-                                    .update_global(|state: &mut AppState, _| {
+                                    .read_global(|state: &AppState, _| {
                                         if let Some(room_state) = state.get_room_state(room_id) {
                                             (
                                                 room_state.reconnecting,
@@ -479,12 +480,15 @@ impl RoomCard {
                 cx.refresh_windows();
             }
             RoomCardEvent::WillDeleted(room_id) => {
+                cx.emit(RoomCardEvent::Deleted(this.entity_id()));
+
                 cx.update_global(|state: &mut AppState, _| {
                     state.remove_room_state(*room_id);
                     state.settings.rooms.retain(|d| d.room_id != *room_id);
                     log_user_action("房间删除完成", Some(&format!("房间号: {room_id}")));
                 });
             }
+            _ => {}
         }
     }
 }
@@ -599,16 +603,17 @@ impl Render for RoomCard {
 
         let room_info = room_info.clone().unwrap_or_default();
         let user_info = user_info.clone().unwrap_or_default();
+        let room_state = self.get_room_state(cx).unwrap_or_default().clone();
 
         div()
             .rounded_lg()
             .p_4()
             .border(px(1.0))
             .border_color(cx.theme().border)
-            .when(matches!(self.get_room_state(cx).unwrap().downloader_status, Some(DownloaderStatus::Error { .. })), |div| {
+            .when(matches!(room_state.downloader_status, Some(DownloaderStatus::Error { .. })), |div| {
                 div.border_color(cx.theme().red)
             })
-            .when(self.get_room_state(cx).unwrap().reconnecting, |div| {
+            .when(room_state.reconnecting, |div| {
                 div.border_color(cx.theme().warning)
             })
             .child(
@@ -680,7 +685,7 @@ impl Render for RoomCard {
                                                     )
                                                     .when(
                                                         matches!(
-                                                            self.get_room_state(cx).unwrap().status,
+                                                            room_state.status,
                                                             RoomCardStatus::LiveRecording
                                                         ),
                                                         |div| {
@@ -703,7 +708,7 @@ impl Render for RoomCard {
                                     .gap_2()
                                     .when(
                                         matches!(
-                                            self.get_room_state(cx).unwrap().status,
+                                            room_state.status,
                                             RoomCardStatus::LiveRecording
                                                 | RoomCardStatus::WaitLiveStreaming
                                         ),
@@ -734,7 +739,7 @@ impl Render for RoomCard {
                                                         room_info.live_status,
                                                         LiveStatus::Live
                                                     ))
-                                                    .label(match &self.get_room_state(cx).unwrap().status {
+                                                    .label(match &room_state.status {
                                                         RoomCardStatus::WaitLiveStreaming => {
                                                             "开始录制"
                                                         }
@@ -795,7 +800,7 @@ impl Render for RoomCard {
                         h_flex()
                             .gap_x_4()
                             .items_center()
-                            .when_some(self.get_room_state(cx).unwrap().downloader_status.clone(), |div, status| {
+                            .when_some(room_state.downloader_status.clone(), |div, status| {
                                 match status {
                                     DownloaderStatus::Started { ref file_path } => {
                                         div.child(format!("录制中: {}", Path::new(file_path).file_name().unwrap_or_default().to_string_lossy()).into_element())
@@ -808,7 +813,7 @@ impl Render for RoomCard {
                                     }
                                 }
                             })
-                            .when_some(self.get_room_state(cx).unwrap().downloader_speed, |div, speed| {
+                            .when_some(room_state.downloader_speed, |div, speed| {
                                 div.child(format!("{speed:.2} Kb/s").into_element())
                             })
                     ),

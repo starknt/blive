@@ -40,7 +40,7 @@ fn main() {
 
     let app = Application::new().with_assets(Assets);
     app.on_reopen(|cx| {
-        open_main_window(cx, true);
+        open_main_window(cx);
     });
 
     let app_quitting = quitting.clone();
@@ -88,7 +88,7 @@ fn main() {
             items: vec![MenuItem::action("退出", Quit)],
         }]);
 
-        open_main_window(cx, false);
+        open_main_window(cx);
         cx.activate(true);
 
 
@@ -105,7 +105,7 @@ fn main() {
                         TrayMessage::OpenWindow => {
                             let _ = cx.update(|cx| {
                                 if cx.windows().is_empty() {
-                                    open_main_window(cx, true);
+                                    open_main_window(cx);
                                 } else if let Some(window) = cx.windows().first() {
                                     window
                                         .update(cx, |_, window, _| {
@@ -149,7 +149,7 @@ fn main() {
     }
 }
 
-fn open_main_window(cx: &mut App, reopen: bool) {
+fn open_main_window(cx: &mut App) {
     let mut window_size = size(px(1600.0), px(900.0));
     if let Some(display) = cx.primary_display() {
         let display_size = display.bounds().size;
@@ -180,7 +180,7 @@ fn open_main_window(cx: &mut App, reopen: bool) {
         let window = cx
             .open_window(options, |window, cx| {
                 let rooms = cx.read_global(|state: &AppState, _| state.settings.rooms.clone());
-                let root = BLiveApp::view(DISPLAY_NAME.into(), rooms, reopen, window, cx);
+                let root = BLiveApp::view(DISPLAY_NAME.into(), rooms, window, cx);
 
                 window.on_window_should_close(cx, |window, _| {
                     #[cfg(target_os = "windows")]

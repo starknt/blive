@@ -12,7 +12,7 @@ use gpui_component::{
 };
 
 use crate::{
-    components::{RoomCard, RoomCardStatus, RoomInput, RoomInputEvent},
+    components::{RoomCard, RoomCardEvent, RoomCardStatus, RoomInput, RoomInputEvent},
     logger::log_user_action,
     settings::RoomSettings,
     state::AppState,
@@ -37,7 +37,6 @@ impl BLiveApp {
     fn new(
         title: String,
         rooms: Vec<RoomSettings>,
-        reopen: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -50,73 +49,28 @@ impl BLiveApp {
             cx.subscribe_in(&cx.entity(), window, Self::on_app_event),
         ];
 
-        let mut room_cards = vec![];
-
-        if !reopen {
-            for room in rooms {
-                let room_id = room.room_id;
-                log_user_action("加载房间", Some(&format!("房间号: {room_id}")));
-                cx.emit(BLiveAppEvent::InitRoom(room));
-            }
-        } else {
-            let (client, global_settings, room_states) = cx.read_global(|state: &AppState, _| {
-                (
-                    state.client.clone(),
-                    state.settings.clone(),
-                    state.room_states.clone(),
-                )
-            });
-
-            for room in room_states {
-                room_cards.push(cx.new(|cx| {
-                    RoomCard::view(
-                        RoomSettings {
-                            room_id: room.room_id,
-                            strategy: Some(
-                                room.settings.strategy.unwrap_or(global_settings.strategy),
-                            ),
-                            quality: Some(room.settings.quality.unwrap_or(global_settings.quality)),
-                            format: Some(room.settings.format.unwrap_or(global_settings.format)),
-                            codec: Some(room.settings.codec.unwrap_or(global_settings.codec)),
-                            record_name: room.settings.record_name.clone(),
-                            record_dir: match room
-                                .settings
-                                .record_dir
-                                .clone()
-                                .unwrap_or_default()
-                                .is_empty()
-                            {
-                                true => Some(global_settings.record_dir.clone()),
-                                false => room.settings.record_dir.clone(),
-                            },
-                        },
-                        client.clone(),
-                        room.downloader.clone(),
-                        window,
-                        cx,
-                    )
-                }));
-            }
+        for room in rooms {
+            let room_id = room.room_id;
+            log_user_action("加载房间", Some(&format!("房间号: {room_id}")));
+            cx.emit(BLiveAppEvent::InitRoom(room));
         }
 
         Self {
             room_id: room_num,
             room_input,
             title_bar,
-            room_cards,
+            room_cards: vec![],
             _subscriptions,
         }
     }
 
-    /// 创建应用视图
     pub fn view(
         title: String,
         rooms: Vec<RoomSettings>,
-        reopen: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|cx| Self::new(title, rooms, reopen, window, cx))
+        cx.new(|cx| Self::new(title, rooms, window, cx))
     }
 
     /// 处理房间输入变化
@@ -217,7 +171,11 @@ impl BLiveApp {
                             cx,
                         )
                     });
+
+                    let subscription = cx.subscribe(&room_card, Self::on_room_card_event);
+                    self._subscriptions.push(subscription);
                     self.room_cards.push(room_card);
+
                     log_user_action(
                         "房间状态创建成功",
                         Some(&format!("房间号: {}", settings.room_id)),
@@ -227,6 +185,18 @@ impl BLiveApp {
         }
 
         cx.notify();
+    }
+
+    fn on_room_card_event(
+        &mut self,
+        _: Entity<RoomCard>,
+        event: &RoomCardEvent,
+        _: &mut Context<Self>,
+    ) {
+        if let RoomCardEvent::Deleted(entity_id) = event {
+            self.room_cards
+                .retain(|card| card.entity_id() != *entity_id);
+        }
     }
 }
 

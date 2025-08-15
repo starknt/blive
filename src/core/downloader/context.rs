@@ -4,11 +4,11 @@ use std::{
     time::Duration,
 };
 
-use gpui::AsyncApp;
+use gpui::{AsyncApp, WeakEntity};
 use try_lock::TryLock;
 
 use crate::{
-    components::DownloaderStatus,
+    components::{DownloaderStatus, RoomCard},
     core::{
         HttpClient,
         downloader::{
@@ -87,6 +87,7 @@ pub struct DownloaderContext {
     pub format: VideoContainer,
     pub codec: StreamCodec,
     pub strategy: Strategy,
+    pub entity: Arc<TryLock<Option<WeakEntity<RoomCard>>>>,
     stats: Arc<TryLock<DownloadStats>>,
     is_running: Arc<atomic::AtomicBool>,
     event_queue: Arc<TryLock<VecDeque<DownloadEvent>>>,
@@ -105,6 +106,7 @@ impl DownloaderContext {
         codec: StreamCodec,
     ) -> Self {
         Self {
+            entity: Arc::new(TryLock::new(None)),
             status: Arc::new(TryLock::new(DownloadStatus::NotStarted)),
             room_id,
             client,
@@ -138,9 +140,12 @@ impl DownloaderContext {
         self.status.try_lock().unwrap().clone()
     }
 
-    // 事件现在通过全局状态管理，不再需要直接发送到 Entity
-    pub fn emit_downloader_event(&self, _cx: &mut AsyncApp, _event: DownloaderEvent) {
-        // 这个方法现在是一个空实现，因为事件通过全局状态管理
+    pub fn emit_downloader_event(&self, cx: &mut AsyncApp, event: DownloaderEvent) {
+        if let Some(entity) = self.entity.try_lock().unwrap().as_ref() {
+            let _ = entity.update(cx, |_, cx| {
+                cx.emit(event);
+            });
+        }
     }
 
     /// 推送事件到队列
@@ -179,12 +184,18 @@ impl DownloaderContext {
                 // 确保运行状态为true
                 self.set_running(true);
 
+                self.emit_downloader_event(
+                    cx,
+                    DownloaderEvent::Started {
+                        file_path: file_path.to_owned(),
+                    },
+                );
+
                 // 更新全局状态
                 self.update_global_state(cx, |state| {
                     state.downloader_status = Some(DownloaderStatus::Started {
                         file_path: file_path.to_owned(),
                     });
-                    state.downloader_speed = None;
                 });
             }
             DownloadEvent::Progress {
@@ -196,10 +207,12 @@ impl DownloaderContext {
                     stats.download_speed_kbps = *download_speed_kbps;
                 });
 
-                // 更新全局状态
-                self.update_global_state(cx, |state| {
-                    state.downloader_speed = Some(*download_speed_kbps);
-                });
+                self.emit_downloader_event(
+                    cx,
+                    DownloaderEvent::Progress {
+                        speed: *download_speed_kbps,
+                    },
+                );
             }
             DownloadEvent::Error { error } => {
                 if error.is_recoverable() {
@@ -211,14 +224,10 @@ impl DownloaderContext {
                     state.downloader_status = Some(DownloaderStatus::Error {
                         cause: error.to_string(),
                     });
-                    state.downloader_speed = None;
                 });
             }
             DownloadEvent::Reconnecting => {
-                // 重连事件处理
-                self.update_global_state(cx, |state| {
-                    state.reconnecting = true;
-                });
+                self.emit_downloader_event(cx, DownloaderEvent::Reconnecting);
             }
             DownloadEvent::Completed {
                 file_size,
@@ -230,6 +239,15 @@ impl DownloaderContext {
                     stats.bytes_downloaded = *file_size;
                 });
 
+                self.emit_downloader_event(
+                    cx,
+                    DownloaderEvent::Completed {
+                        file_path: file_path.to_owned(),
+                        file_size: *file_size,
+                        duration: *duration,
+                    },
+                );
+
                 // 更新全局状态
                 self.update_global_state(cx, |state| {
                     state.downloader_status = Some(DownloaderStatus::Completed {
@@ -237,7 +255,6 @@ impl DownloaderContext {
                         file_size: *file_size,
                         duration: *duration,
                     });
-                    state.downloader_speed = None;
                 });
 
                 // 下载完成，停止运行状态
@@ -357,8 +374,8 @@ impl DownloaderContext {
             })
     }
 
-    /// 更新全局状态中的房间状态
-    fn update_global_state<F>(&self, cx: &mut AsyncApp, updater: F)
+    /// 更新全局状态
+    pub fn update_global_state<F>(&self, cx: &mut AsyncApp, updater: F)
     where
         F: FnOnce(&mut RoomCardState),
     {
@@ -367,5 +384,12 @@ impl DownloaderContext {
                 updater(room_state);
             }
         });
+    }
+
+    /// 更新房间卡片
+    pub fn update_room_card_entity(&self, entity: WeakEntity<RoomCard>) {
+        if let Some(mut entity_guard) = self.entity.try_lock() {
+            *entity_guard = Some(entity);
+        }
     }
 }

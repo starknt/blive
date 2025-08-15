@@ -4,6 +4,7 @@ use crate::{
         HttpClient,
         downloader::{
             BLiveDownloader,
+            context::DownloaderEvent,
             utils::{pretty_bytes, pretty_duration},
         },
         http_client::{
@@ -13,7 +14,7 @@ use crate::{
     },
     logger::log_user_action,
     settings::RoomSettings,
-    state::{AppState, ReconnectManager, RoomCardState},
+    state::{AppState, RoomCardState},
 };
 use gpui::{
     App, ClickEvent, Entity, EntityId, EventEmitter, ObjectFit, SharedString, Subscription,
@@ -65,6 +66,7 @@ pub struct RoomCard {
     pub settings_modal: Entity<RoomSettingsModal>,
     pub(crate) room_info: Option<LiveRoomInfoData>,
     pub(crate) user_info: Option<LiveUserInfo>,
+    pub downloader_speed: Option<f32>,
     pub downloader: Option<Arc<BLiveDownloader>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -83,6 +85,7 @@ impl RoomCard {
             settings_modal,
             room_info: None,
             user_info: None,
+            downloader_speed: None,
             downloader,
             _subscriptions: subscriptions,
         }
@@ -213,7 +216,14 @@ impl RoomCard {
                 },
             ),
             cx.subscribe_in(&cx.entity(), window, Self::on_event),
+            cx.subscribe_in(&cx.entity(), window, Self::on_downloader_event),
         ];
+
+        if let Some(downloader) = downloader.clone() {
+            downloader
+                .context
+                .update_room_card_entity(cx.entity().downgrade());
+        }
 
         Self::new(client, settings, settings_modal, subscription, downloader)
     }
@@ -314,8 +324,6 @@ impl RoomCard {
                 match live_status {
                     LiveStatus::Live => {
                         self.update_room_state(cx, |state| {
-                            state.downloader_speed = None;
-                            state.downloader_status = None;
                             state.status = RoomCardStatus::LiveRecording;
                             state.reconnect_manager.reset_attempts();
                         });
@@ -336,6 +344,8 @@ impl RoomCard {
                             client,
                             self.settings.room_id,
                         ));
+
+                        downloader.context.update_room_card_entity(this.downgrade());
 
                         self.downloader = Some(downloader.clone());
                         cx.update_global(|state: &mut AppState, _| {
@@ -359,90 +369,6 @@ impl RoomCard {
                             }
                         })
                         .detach();
-
-                        // 启动重连检查任务
-                        let room_id = self.settings.room_id;
-                        let record_dir = self.settings.record_dir.clone().unwrap_or_default();
-
-                        cx.spawn(async move |_, cx| {
-                            loop {
-                                cx.background_executor().timer(Duration::from_secs(5)).await;
-
-                                // 检查是否需要重连
-                                let (should_reconnect, reconnect_config) = cx
-                                    .read_global(|state: &AppState, _| {
-                                        if let Some(room_state) = state.get_room_state(room_id) {
-                                            (
-                                                room_state.reconnecting,
-                                                room_state.reconnect_manager.clone(),
-                                            )
-                                        } else {
-                                            (
-                                                false,
-                                                ReconnectManager::new(
-                                                    10,
-                                                    Duration::from_secs(1),
-                                                    Duration::from_secs(30),
-                                                ),
-                                            )
-                                        }
-                                    })
-                                    .unwrap_or((
-                                        false,
-                                        ReconnectManager::new(
-                                            10,
-                                            Duration::from_secs(1),
-                                            Duration::from_secs(30),
-                                        ),
-                                    ));
-
-                                if should_reconnect {
-                                    // 检查重连管理器是否允许重连
-                                    if reconnect_config.should_reconnect() {
-                                        // 尝试重连
-                                        let downloader = cx
-                                            .update_global(|state: &mut AppState, _| {
-                                                if let Some(room_state) =
-                                                    state.get_room_state(room_id)
-                                                {
-                                                    room_state.downloader.clone()
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                            .unwrap_or(None);
-
-                                        if let Some(downloader) = downloader {
-                                            let _ = downloader.restart(cx, &record_dir).await;
-
-                                            // 重连完成，更新状态
-                                            let _ = cx.update_global(|state: &mut AppState, _| {
-                                                if let Some(room_state) =
-                                                    state.get_room_state_mut(room_id)
-                                                {
-                                                    room_state.reconnecting = false;
-                                                    room_state
-                                                        .reconnect_manager
-                                                        .increment_attempt();
-                                                }
-                                            });
-                                        }
-                                    } else {
-                                        // 重连次数已达上限，停止重连
-                                        let _ = cx.update_global(|state: &mut AppState, _| {
-                                            if let Some(room_state) =
-                                                state.get_room_state_mut(room_id)
-                                            {
-                                                room_state.reconnecting = false;
-                                                room_state.status =
-                                                    RoomCardStatus::WaitLiveStreaming;
-                                            }
-                                        });
-                                    }
-                                }
-                            }
-                        })
-                        .detach();
                     }
                     LiveStatus::Carousel | LiveStatus::Offline => {
                         cx.emit(RoomCardEvent::StopRecording(false));
@@ -454,7 +380,6 @@ impl RoomCard {
             RoomCardEvent::StopRecording(user_action) => {
                 self.update_room_state(cx, |state| {
                     state.user_stop = *user_action;
-                    state.downloader_speed = None;
                     state.status = RoomCardStatus::WaitLiveStreaming;
                 });
 
@@ -491,9 +416,59 @@ impl RoomCard {
             _ => {}
         }
     }
+
+    fn on_downloader_event(
+        &mut self,
+        _: &Entity<Self>,
+        event: &DownloaderEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            DownloaderEvent::Started { .. } => {
+                self.downloader_speed = None;
+            }
+            DownloaderEvent::Progress { speed } => {
+                self.downloader_speed = Some(*speed);
+            }
+            DownloaderEvent::Completed { .. } => {
+                self.downloader_speed = None;
+                cx.emit(RoomCardEvent::StopRecording(false));
+            }
+            DownloaderEvent::Reconnecting => {
+                let state = self.get_room_state(cx).unwrap();
+                let room_id = self.settings.room_id;
+                if state.reconnect_manager.should_reconnect() {
+                    let delay = state.reconnect_manager.calculate_delay();
+                    let record_dir = state.settings.record_dir.clone().unwrap_or_default();
+                    let downloader = state.downloader.clone().unwrap();
+
+                    cx.spawn(async move |_, cx| {
+                        cx.background_executor().timer(delay).await;
+                        let _ = downloader.restart(cx, &record_dir).await;
+                        let _ = cx.update_global(|state: &mut AppState, _| {
+                            state
+                                .get_room_state_mut(room_id)
+                                .unwrap()
+                                .reconnect_manager
+                                .increment_attempt();
+                        });
+                    })
+                    .detach();
+                }
+            }
+            DownloaderEvent::Error { .. } => {
+                self.downloader_speed = None;
+            }
+        }
+
+        cx.notify();
+    }
 }
 
 impl EventEmitter<RoomCardEvent> for RoomCard {}
+
+impl EventEmitter<DownloaderEvent> for RoomCard {}
 
 impl Render for RoomCard {
     fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -813,7 +788,7 @@ impl Render for RoomCard {
                                     }
                                 }
                             })
-                            .when_some(room_state.downloader_speed, |div, speed| {
+                            .when_some(self.downloader_speed, |div, speed| {
                                 div.child(format!("{speed:.2} Kb/s").into_element())
                             })
                     ),

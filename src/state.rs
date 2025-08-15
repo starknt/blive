@@ -15,7 +15,6 @@ pub struct RoomCardState {
     pub user_stop: bool,
     pub downloader: Option<Arc<BLiveDownloader>>,
     pub downloader_status: Option<DownloaderStatus>,
-    pub downloader_speed: Option<f32>,
     pub reconnecting: bool,
     pub settings: RoomSettings,
     pub reconnect_manager: ReconnectManager,
@@ -74,7 +73,6 @@ impl RoomCardState {
             user_stop: false,
             downloader: None,
             downloader_status: None,
-            downloader_speed: None,
             reconnecting: false,
             settings,
             reconnect_manager: ReconnectManager::new(

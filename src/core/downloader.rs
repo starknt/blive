@@ -6,7 +6,6 @@ pub mod stats;
 pub mod template;
 pub mod utils;
 
-use crate::components::RoomCard;
 use crate::core::downloader::error::DownloaderError;
 use crate::core::downloader::template::DownloaderFilenameTemplate;
 use crate::core::downloader::{http_hls::HttpHlsDownloader, http_stream::HttpStreamDownloader};
@@ -22,7 +21,7 @@ use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
 pub use context::{DownloadConfig, DownloaderContext};
-use gpui::{AsyncApp, WeakEntity};
+use gpui::AsyncApp;
 use rand::Rng;
 pub use stats::DownloadStats;
 use std::sync::Mutex;
@@ -32,23 +31,22 @@ pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb
 
 #[derive(Debug, Clone)]
 pub enum DownloadEvent {
-    /// 下载开始
-    Started { file_path: String },
-    /// 进度更新
+    Started {
+        file_path: String,
+    },
     Progress {
         bytes_downloaded: u64,
         download_speed_kbps: f32,
         duration_ms: u64,
     },
-    /// 下载完成
     Completed {
         file_path: String,
         file_size: u64,
         duration: u64,
     },
-    /// 下载错误
-    Error { error: DownloaderError },
-    /// 网络重连中
+    Error {
+        error: DownloaderError,
+    },
     Reconnecting,
 }
 
@@ -77,11 +75,13 @@ pub enum DownloadStatus {
     Error(DownloaderError),
 }
 
+#[derive(Debug)]
 pub enum DownloaderType {
     HttpStream(Option<HttpStreamDownloader>),
     HttpHls(Option<HttpHlsDownloader>),
 }
 
+#[derive(Debug)]
 pub struct BLiveDownloader {
     pub context: DownloaderContext,
     downloader: Mutex<Option<DownloaderType>>,
@@ -178,9 +178,7 @@ impl BLiveDownloader {
         Ok(())
     }
 
-    /// 改进的启动方法
     pub async fn start(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
-        // 尝试启动下载
         match self.start_download(cx, record_dir).await {
             Ok(_) => Ok(()),
             Err(e) => Err(e),
@@ -227,10 +225,10 @@ impl BLiveDownloader {
         codec: StreamCodec,
         strategy: Strategy,
         client: HttpClient,
-        entity: WeakEntity<RoomCard>,
+        room_id: u64,
     ) -> Self {
         let context: DownloaderContext = DownloaderContext::new(
-            entity, client, room_info, user_info, strategy, quality, format, codec,
+            room_id, client, room_info, user_info, strategy, quality, format, codec,
         );
 
         Self {

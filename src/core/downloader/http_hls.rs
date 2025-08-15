@@ -11,6 +11,7 @@ use futures::channel::oneshot;
 use gpui::AsyncApp;
 use std::time::Instant;
 
+#[derive(Debug)]
 pub struct HttpHlsDownloader {
     url: String,
     config: DownloadConfig,

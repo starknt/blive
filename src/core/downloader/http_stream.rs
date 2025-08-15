@@ -14,6 +14,7 @@ use gpui::http_client::{AsyncBody, Method, Request};
 use std::io::Write;
 use std::time::Instant;
 
+#[derive(Debug)]
 pub struct HttpStreamDownloader {
     url: String,
     config: DownloadConfig,

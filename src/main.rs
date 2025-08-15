@@ -63,13 +63,17 @@ fn main() {
         cx.on_app_quit(move |cx| {
             let downloaders = cx.read_global(|state: &AppState, _| {
                 state.settings.save();
-
-                state.downloaders.clone()
+                state.room_states.iter().map(|room| room.downloader.clone()).collect::<Vec<_>>()
             });
 
             let app_quitting = app_quitting.clone();
             async move {
-                futures::future::join_all(downloaders.iter().map(|downloader| downloader.stop())).await;
+                futures::future::join_all(downloaders.iter().map(async |downloader| {
+                    if let Some(downloader) = downloader {
+                        downloader.stop().await
+                    }
+                }))
+                .await;
 
                 // 记录应用关闭日志
                 log_app_shutdown();

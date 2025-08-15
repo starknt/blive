@@ -1,5 +1,6 @@
 use gpui::{
-    App, Axis, ClickEvent, Entity, EventEmitter, Subscription, Window, div, prelude::*, px,
+    App, AppContext, Axis, ClickEvent, Entity, EventEmitter, Subscription, Window, div, prelude::*,
+    px,
 };
 use gpui_component::{
     ActiveTheme as _, ContextModal, Root, StyledExt,
@@ -23,9 +24,10 @@ enum BLiveAppEvent {
 }
 
 pub struct BLiveApp {
-    room_num: u64,
+    room_id: u64,
     room_input: Entity<RoomInput>,
     title_bar: Entity<AppTitleBar>,
+    room_cards: Vec<Entity<RoomCard>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -48,18 +50,60 @@ impl BLiveApp {
             cx.subscribe_in(&cx.entity(), window, Self::on_app_event),
         ];
 
+        let mut room_cards = vec![];
+
         if !reopen {
             for room in rooms {
                 let room_id = room.room_id;
                 log_user_action("加载房间", Some(&format!("房间号: {room_id}")));
                 cx.emit(BLiveAppEvent::InitRoom(room));
             }
+        } else {
+            let (client, global_settings, room_states) = cx.read_global(|state: &AppState, _| {
+                (
+                    state.client.clone(),
+                    state.settings.clone(),
+                    state.room_states.clone(),
+                )
+            });
+
+            for room in room_states {
+                room_cards.push(cx.new(|cx| {
+                    RoomCard::view(
+                        RoomSettings {
+                            room_id: room.room_id,
+                            strategy: Some(
+                                room.settings.strategy.unwrap_or(global_settings.strategy),
+                            ),
+                            quality: Some(room.settings.quality.unwrap_or(global_settings.quality)),
+                            format: Some(room.settings.format.unwrap_or(global_settings.format)),
+                            codec: Some(room.settings.codec.unwrap_or(global_settings.codec)),
+                            record_name: room.settings.record_name.clone(),
+                            record_dir: match room
+                                .settings
+                                .record_dir
+                                .clone()
+                                .unwrap_or_default()
+                                .is_empty()
+                            {
+                                true => Some(global_settings.record_dir.clone()),
+                                false => room.settings.record_dir.clone(),
+                            },
+                        },
+                        client.clone(),
+                        room.downloader.clone(),
+                        window,
+                        cx,
+                    )
+                }));
+            }
         }
 
         Self {
-            room_num,
+            room_id: room_num,
             room_input,
             title_bar,
+            room_cards,
             _subscriptions,
         }
     }
@@ -84,16 +128,16 @@ impl BLiveApp {
         _: &mut Context<Self>,
     ) {
         let RoomInputEvent::RoomInputChange(room_num) = event;
-        self.room_num = *room_num;
+        self.room_id = *room_num;
         log_user_action("房间号输入变化", Some(&format!("新房间号: {room_num}")));
     }
 
     /// 添加录制房间
     fn add_recording(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.room_num > 0 {
-            let room_num = self.room_num;
+        if self.room_id > 0 {
+            let room_id = self.room_id;
 
-            log_user_action("点击添加录制按钮", Some(&format!("房间号: {room_num}")));
+            log_user_action("点击添加录制按钮", Some(&format!("房间号: {room_id}")));
 
             cx.update_global(|state: &mut AppState, cx| {
                 // 检查是否已经存在
@@ -101,27 +145,47 @@ impl BLiveApp {
                     .settings
                     .rooms
                     .iter()
-                    .any(|room| room.room_id == room_num)
+                    .any(|room| room.room_id == room_id)
                 {
-                    log_user_action("尝试添加重复房间", Some(&format!("房间号: {room_num}")));
+                    log_user_action("尝试添加重复房间", Some(&format!("房间号: {room_id}")));
                     window.push_notification(
-                        Notification::warning(format!("不能重复监听 {room_num}")),
+                        Notification::warning(format!("不能重复监听 {room_id}")),
                         cx,
                     );
                     return;
                 }
 
-                let settings = RoomSettings::new(room_num);
-                let room = RoomCard::view(
-                    state.settings.clone(),
-                    settings.clone(),
-                    window,
-                    cx,
-                    state.client.clone(),
-                );
-                state.room_entities.push(room);
-                state.settings.rooms.push(settings);
-                log_user_action("新房间添加成功", Some(&format!("房间号: {room_num}")));
+                let global_settings = state.settings.clone();
+                let settings = RoomSettings::new(room_id);
+                state.add_room_state(room_id, settings.clone());
+                state.settings.rooms.push(settings.clone());
+                self.room_cards.push(cx.new(|cx| {
+                    RoomCard::view(
+                        RoomSettings {
+                            room_id,
+                            strategy: Some(settings.strategy.unwrap_or(global_settings.strategy)),
+                            quality: Some(settings.quality.unwrap_or(global_settings.quality)),
+                            format: Some(settings.format.unwrap_or(global_settings.format)),
+                            codec: Some(settings.codec.unwrap_or(global_settings.codec)),
+                            record_name: settings.record_name.clone(),
+                            record_dir: match settings
+                                .record_dir
+                                .clone()
+                                .unwrap_or_default()
+                                .is_empty()
+                            {
+                                true => Some(global_settings.record_dir.clone()),
+                                false => settings.record_dir.clone(),
+                            },
+                        },
+                        state.client.clone(),
+                        None,
+                        window,
+                        cx,
+                    )
+                }));
+                cx.notify();
+                log_user_action("新房间添加成功", Some(&format!("房间号: {room_id}")));
             });
         } else {
             log_user_action("尝试添加无效房间", Some("房间号为0"));
@@ -140,22 +204,29 @@ impl BLiveApp {
         match event {
             BLiveAppEvent::InitRoom(settings) => {
                 cx.update_global(|state: &mut AppState, cx| {
-                    let room = RoomCard::view(
-                        state.settings.clone(),
-                        settings.clone(),
-                        window,
-                        cx,
-                        state.client.clone(),
-                    );
-
-                    state.room_entities.push(room);
+                    state.add_room_state(settings.room_id, settings.clone());
+                    let downloader = state
+                        .get_room_state(settings.room_id)
+                        .and_then(|room| room.downloader.clone());
+                    let room_card = cx.new(|cx| {
+                        RoomCard::view(
+                            settings.clone(),
+                            state.client.clone(),
+                            downloader,
+                            window,
+                            cx,
+                        )
+                    });
+                    self.room_cards.push(room_card);
                     log_user_action(
-                        "房间卡片创建成功",
+                        "房间状态创建成功",
                         Some(&format!("房间号: {}", settings.room_id)),
                     );
                 });
             }
         }
+
+        cx.notify();
     }
 }
 
@@ -165,9 +236,9 @@ impl Render for BLiveApp {
         let notification_layer = Root::render_notification_layer(window, cx);
         let state = AppState::global(cx);
         let recording_count = state
-            .room_entities
+            .room_states
             .iter()
-            .filter(|room| matches!(room.read(cx).status, RoomCardStatus::LiveRecording))
+            .filter(|room| matches!(room.status, RoomCardStatus::LiveRecording))
             .count();
 
         div()
@@ -302,9 +373,9 @@ impl Render for BLiveApp {
                                                                     .text_sm()
                                                                     .font_semibold()
                                                                     .text_color(cx.theme().primary)
-                                                                    .child(Text::String(
-                                                                        format!("共 {} 个房间", state.room_entities.len()).into(),
-                                                                    )),
+                                                                                                        .child(Text::String(
+                                        format!("共 {} 个房间", state.room_states.len()).into(),
+                                    )),
                                                             ),
                                                     )
                                                     .child(
@@ -336,7 +407,7 @@ impl Render for BLiveApp {
                                                                                                     .font_semibold()
                                                                                                     .text_2xl()
                                                                                                     .text_color(gpui::rgb(0x3b82f6))
-                                                                                                    .child(Text::String(state.room_entities.len().to_string().into())),
+                                                                                                    .child(Text::String(state.room_states.len().to_string().into())),
                                                                                             )
                                                                                             .child(
                                                                                                 div()
@@ -371,7 +442,7 @@ impl Render for BLiveApp {
                                                             ),
                                                     )
                                                     .child({
-                                                        if !state.room_entities.is_empty() {
+                                                        if !state.room_states.is_empty() {
                                                             div()
                                                                 .flex_1()
                                                                 .overflow_hidden()
@@ -380,7 +451,7 @@ impl Render for BLiveApp {
                                                                         .size_full()
                                                                         .gap_4()
                                                                         .scrollable(Axis::Vertical)
-                                                                        .children(state.room_entities.to_vec()),
+                                                                        .children(self.room_cards.to_vec()),
                                                                 )
                                                         } else {
                                                             div()

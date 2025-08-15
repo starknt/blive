@@ -4,11 +4,10 @@ use std::{
     time::Duration,
 };
 
-use gpui::{AsyncApp, WeakEntity};
+use gpui::AsyncApp;
 use try_lock::TryLock;
 
 use crate::{
-    components::RoomCard,
     core::{
         HttpClient,
         downloader::{
@@ -19,6 +18,7 @@ use crate::{
     },
     log_recording_error, log_recording_start, log_recording_stop,
     settings::{Quality, Strategy, StreamCodec, VideoContainer},
+    state::AppState,
 };
 
 #[derive(Debug, Clone)]
@@ -75,10 +75,10 @@ impl Default for DownloadConfig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DownloaderContext {
     status: Arc<TryLock<DownloadStatus>>,
-    pub entity: Arc<TryLock<WeakEntity<RoomCard>>>,
+    pub room_id: u64,
     pub client: HttpClient,
     pub room_info: LiveRoomInfoData,
     pub user_info: LiveUserInfo,
@@ -94,7 +94,7 @@ pub struct DownloaderContext {
 impl DownloaderContext {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        entity: WeakEntity<RoomCard>,
+        room_id: u64,
         client: HttpClient,
         room_info: LiveRoomInfoData,
         user_info: LiveUserInfo,
@@ -105,7 +105,7 @@ impl DownloaderContext {
     ) -> Self {
         Self {
             status: Arc::new(TryLock::new(DownloadStatus::NotStarted)),
-            entity: Arc::new(TryLock::new(entity)),
+            room_id,
             client,
             room_info,
             user_info,
@@ -137,12 +137,9 @@ impl DownloaderContext {
         self.status.try_lock().unwrap().clone()
     }
 
-    pub fn emit_downloader_event(&self, cx: &mut AsyncApp, event: DownloaderEvent) {
-        if let Some(entity) = self.entity.try_lock().unwrap().upgrade() {
-            let _ = entity.update(cx, |_, cx| {
-                cx.emit(event);
-            });
-        }
+    // 事件现在通过全局状态管理，不再需要直接发送到 Entity
+    pub fn emit_downloader_event(&self, _cx: &mut AsyncApp, _event: DownloaderEvent) {
+        // 这个方法现在是一个空实现，因为事件通过全局状态管理
     }
 
     /// 推送事件到队列
@@ -175,58 +172,72 @@ impl DownloaderContext {
             return;
         }
 
-        // 更新UI状态并处理下载器状态
+        // 事件现在通过全局状态管理，这里只处理内部状态
         match &event {
             DownloadEvent::Started { file_path } => {
-                self.emit_downloader_event(
-                    cx,
-                    DownloaderEvent::Started {
-                        file_path: file_path.to_owned(),
-                    },
-                );
                 // 确保运行状态为true
                 self.set_running(true);
+
+                // 更新全局状态
+                self.update_global_state(cx, |state| {
+                    state.downloader_status = Some(crate::components::DownloaderStatus::Started {
+                        file_path: file_path.to_owned(),
+                    });
+                    state.downloader_speed = None;
+                });
             }
             DownloadEvent::Progress {
                 download_speed_kbps,
                 ..
             } => {
-                self.emit_downloader_event(
-                    cx,
-                    DownloaderEvent::Progress {
-                        speed: *download_speed_kbps,
-                    },
-                );
                 // 更新统计信息
                 self.update_stats(|stats| {
                     stats.download_speed_kbps = *download_speed_kbps;
+                });
+
+                // 更新全局状态
+                self.update_global_state(cx, |state| {
+                    state.downloader_speed = Some(*download_speed_kbps);
                 });
             }
             DownloadEvent::Error { error } => {
                 if error.is_recoverable() {
                     self.push_event(DownloadEvent::Reconnecting);
                 }
+
+                // 更新全局状态
+                self.update_global_state(cx, |state| {
+                    state.downloader_status = Some(crate::components::DownloaderStatus::Error {
+                        cause: error.to_string(),
+                    });
+                    state.downloader_speed = None;
+                });
             }
             DownloadEvent::Reconnecting => {
-                self.emit_downloader_event(cx, DownloaderEvent::Reconnecting);
+                // 重连事件处理
+                self.update_global_state(cx, |state| {
+                    state.reconnecting = true;
+                });
             }
             DownloadEvent::Completed {
                 file_size,
                 file_path,
                 duration,
             } => {
-                self.emit_downloader_event(
-                    cx,
-                    DownloaderEvent::Completed {
-                        file_path: file_path.to_owned(),
-                        file_size: *file_size,
-                        duration: *duration,
-                    },
-                );
-
                 // 更新完成统计
                 self.update_stats(|stats| {
                     stats.bytes_downloaded = *file_size;
+                });
+
+                // 更新全局状态
+                self.update_global_state(cx, |state| {
+                    state.downloader_status =
+                        Some(crate::components::DownloaderStatus::Completed {
+                            file_path: file_path.to_owned(),
+                            file_size: *file_size,
+                            duration: *duration,
+                        });
+                    state.downloader_speed = None;
                 });
 
                 // 下载完成，停止运行状态
@@ -346,9 +357,15 @@ impl DownloaderContext {
             })
     }
 
-    pub fn update_entity(&self, updater: impl FnOnce(&mut WeakEntity<RoomCard>)) {
-        if let Some(mut entity) = self.entity.try_lock() {
-            updater(&mut entity);
-        }
+    /// 更新全局状态中的房间状态
+    fn update_global_state<F>(&self, cx: &mut AsyncApp, updater: F)
+    where
+        F: FnOnce(&mut crate::state::RoomCardState),
+    {
+        let _ = cx.update_global(|state: &mut AppState, _| {
+            if let Some(room_state) = state.get_room_state_mut(self.room_id) {
+                updater(room_state);
+            }
+        });
     }
 }

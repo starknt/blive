@@ -19,7 +19,13 @@ actions!(menu, [Quit]);
 
 fn main() {
     #[cfg(debug_assertions)]
-    ffmpeg_sidecar::download::auto_download().expect("无法自动下载 ffmpeg");
+    {
+        use ffmpeg_sidecar::command::ffmpeg_is_installed;
+
+        if !ffmpeg_is_installed() {
+            ffmpeg_sidecar::download::auto_download().expect("无法自动下载 ffmpeg");
+        }
+    }
 
     init_logger().expect("无法初始化日志系统");
     log_app_start(env!("CARGO_PKG_VERSION"));

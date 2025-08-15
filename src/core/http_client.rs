@@ -294,7 +294,14 @@ mod test {
     #[tokio::test]
     #[ignore]
     async fn test_get_live_room_stream_url_with_ffmpeg_sidecar() {
-        ffmpeg_sidecar::download::auto_download().unwrap();
+        #[cfg(debug_assertions)]
+        {
+            use ffmpeg_sidecar::command::ffmpeg_is_installed;
+
+            if !ffmpeg_is_installed() {
+                ffmpeg_sidecar::download::auto_download().expect("无法自动下载 ffmpeg");
+            }
+        }
 
         let url = get_live_url(
             1804892069,

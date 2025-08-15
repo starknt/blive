@@ -8,6 +8,7 @@ use gpui::AsyncApp;
 use try_lock::TryLock;
 
 use crate::{
+    components::DownloaderStatus,
     core::{
         HttpClient,
         downloader::{
@@ -18,7 +19,7 @@ use crate::{
     },
     log_recording_error, log_recording_start, log_recording_stop,
     settings::{Quality, Strategy, StreamCodec, VideoContainer},
-    state::AppState,
+    state::{AppState, RoomCardState},
 };
 
 #[derive(Debug, Clone)]
@@ -180,7 +181,7 @@ impl DownloaderContext {
 
                 // 更新全局状态
                 self.update_global_state(cx, |state| {
-                    state.downloader_status = Some(crate::components::DownloaderStatus::Started {
+                    state.downloader_status = Some(DownloaderStatus::Started {
                         file_path: file_path.to_owned(),
                     });
                     state.downloader_speed = None;
@@ -207,7 +208,7 @@ impl DownloaderContext {
 
                 // 更新全局状态
                 self.update_global_state(cx, |state| {
-                    state.downloader_status = Some(crate::components::DownloaderStatus::Error {
+                    state.downloader_status = Some(DownloaderStatus::Error {
                         cause: error.to_string(),
                     });
                     state.downloader_speed = None;
@@ -231,12 +232,11 @@ impl DownloaderContext {
 
                 // 更新全局状态
                 self.update_global_state(cx, |state| {
-                    state.downloader_status =
-                        Some(crate::components::DownloaderStatus::Completed {
-                            file_path: file_path.to_owned(),
-                            file_size: *file_size,
-                            duration: *duration,
-                        });
+                    state.downloader_status = Some(DownloaderStatus::Completed {
+                        file_path: file_path.to_owned(),
+                        file_size: *file_size,
+                        duration: *duration,
+                    });
                     state.downloader_speed = None;
                 });
 
@@ -360,7 +360,7 @@ impl DownloaderContext {
     /// 更新全局状态中的房间状态
     fn update_global_state<F>(&self, cx: &mut AsyncApp, updater: F)
     where
-        F: FnOnce(&mut crate::state::RoomCardState),
+        F: FnOnce(&mut RoomCardState),
     {
         let _ = cx.update_global(|state: &mut AppState, _| {
             if let Some(room_state) = state.get_room_state_mut(self.room_id) {

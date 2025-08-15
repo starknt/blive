@@ -10,9 +10,9 @@ use try_lock::TryLock;
 use crate::{
     components::RoomCard,
     core::{
-        DownloadStatus, HttpClient,
+        HttpClient,
         downloader::{
-            DownloadEvent, DownloadStats,
+            DownloadEvent, DownloadStats, DownloadStatus,
             utils::{self, pretty_bytes, pretty_duration},
         },
         http_client::{room::LiveRoomInfoData, user::LiveUserInfo},
@@ -78,7 +78,7 @@ impl Default for DownloadConfig {
 #[derive(Clone)]
 pub struct DownloaderContext {
     status: Arc<TryLock<DownloadStatus>>,
-    pub entity: WeakEntity<RoomCard>,
+    pub entity: Arc<TryLock<WeakEntity<RoomCard>>>,
     pub client: HttpClient,
     pub room_info: LiveRoomInfoData,
     pub user_info: LiveUserInfo,
@@ -105,7 +105,7 @@ impl DownloaderContext {
     ) -> Self {
         Self {
             status: Arc::new(TryLock::new(DownloadStatus::NotStarted)),
-            entity,
+            entity: Arc::new(TryLock::new(entity)),
             client,
             room_info,
             user_info,
@@ -138,7 +138,7 @@ impl DownloaderContext {
     }
 
     pub fn emit_downloader_event(&self, cx: &mut AsyncApp, event: DownloaderEvent) {
-        if let Some(entity) = self.entity.upgrade() {
+        if let Some(entity) = self.entity.try_lock().unwrap().upgrade() {
             let _ = entity.update(cx, |_, cx| {
                 cx.emit(event);
             });
@@ -298,9 +298,7 @@ impl DownloaderContext {
         cx.spawn(async move |cx| {
             while context.is_running() {
                 // 每 1s 处理一次事件队列
-                cx.background_executor()
-                    .timer(Duration::from_millis(1000))
-                    .await;
+                cx.background_executor().timer(Duration::from_secs(1)).await;
 
                 let processed = context.process_events(cx);
 
@@ -346,5 +344,11 @@ impl DownloaderContext {
                 eprintln!("无法获取统计信息锁");
                 DownloadStats::default()
             })
+    }
+
+    pub fn update_entity(&self, updater: impl FnOnce(&mut WeakEntity<RoomCard>)) {
+        if let Some(mut entity) = self.entity.try_lock() {
+            updater(&mut entity);
+        }
     }
 }

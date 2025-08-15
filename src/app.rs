@@ -35,6 +35,7 @@ impl BLiveApp {
     fn new(
         title: String,
         rooms: Vec<RoomSettings>,
+        reopen: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -47,10 +48,12 @@ impl BLiveApp {
             cx.subscribe_in(&cx.entity(), window, Self::on_app_event),
         ];
 
-        for room in rooms {
-            let room_id = room.room_id;
-            log_user_action("加载房间", Some(&format!("房间号: {room_id}")));
-            cx.emit(BLiveAppEvent::InitRoom(room));
+        if !reopen {
+            for room in rooms {
+                let room_id = room.room_id;
+                log_user_action("加载房间", Some(&format!("房间号: {room_id}")));
+                cx.emit(BLiveAppEvent::InitRoom(room));
+            }
         }
 
         Self {
@@ -65,10 +68,11 @@ impl BLiveApp {
     pub fn view(
         title: String,
         rooms: Vec<RoomSettings>,
+        reopen: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|cx| Self::new(title, rooms, window, cx))
+        cx.new(|cx| Self::new(title, rooms, reopen, window, cx))
     }
 
     /// 处理房间输入变化

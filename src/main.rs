@@ -24,7 +24,6 @@ fn main() {
     init_logger().expect("无法初始化日志系统");
     log_app_start(env!("CARGO_PKG_VERSION"));
 
-    let quitting = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (tx, rx) = flume::unbounded();
     let mut system_tray = SystemTray::new();
 
@@ -43,7 +42,8 @@ fn main() {
         open_main_window(cx);
     });
 
-    let app_quitting = quitting.clone();
+    // system_tray.display();
+
     app.run(move |cx| {
         gpui_component::init(cx);
 
@@ -66,7 +66,6 @@ fn main() {
                 state.room_states.iter().map(|room| room.downloader.clone()).collect::<Vec<_>>()
             });
 
-            let app_quitting = app_quitting.clone();
             async move {
                 futures::future::join_all(downloaders.iter().map(async |downloader| {
                     if let Some(downloader) = downloader {
@@ -77,7 +76,6 @@ fn main() {
 
                 // 记录应用关闭日志
                 log_app_shutdown();
-                app_quitting.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         })
         .detach();
@@ -90,7 +88,6 @@ fn main() {
 
         open_main_window(cx);
         cx.activate(true);
-
 
         cx.spawn(async move |cx| {
             loop {
@@ -138,15 +135,6 @@ fn main() {
         })
         .detach();
     });
-
-    loop {
-        if quitting.load(std::sync::atomic::Ordering::Relaxed) {
-            system_tray.quit();
-            break;
-        }
-
-        std::thread::sleep(std::time::Duration::from_secs(3));
-    }
 }
 
 fn open_main_window(cx: &mut App) {

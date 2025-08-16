@@ -39,6 +39,7 @@ impl SystemTray {
     }
 
     pub fn display(&mut self) {
+        #[cfg(target_os = "macos")]
         self.tray.inner_mut().display();
     }
 

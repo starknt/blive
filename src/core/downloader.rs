@@ -56,23 +56,6 @@ pub trait Downloader {
 
     /// 停止下载
     fn stop(&mut self) -> impl std::future::Future<Output = Result<()>> + Send;
-
-    /// 获取下载状态
-    fn status(&self) -> DownloadStatus;
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum DownloadStatus {
-    /// 未开始
-    NotStarted,
-    /// 下载中
-    Downloading,
-    /// 已完成
-    Completed,
-    /// 重连中
-    Reconnecting,
-    /// 错误
-    Error(DownloaderError),
 }
 
 #[derive(Debug)]
@@ -188,7 +171,6 @@ impl BLiveDownloader {
     pub async fn stop(&self) {
         // 设置停止状态
         self.context.set_running(false);
-        self.context.set_status(DownloadStatus::NotStarted);
 
         {
             let mut downloader_guard = self.downloader.lock().unwrap();
@@ -212,6 +194,10 @@ impl BLiveDownloader {
     pub async fn restart(&self, cx: &mut AsyncApp, record_dir: &str) -> Result<()> {
         self.stop().await;
         self.start(cx, record_dir).await
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.context.is_running()
     }
 }
 

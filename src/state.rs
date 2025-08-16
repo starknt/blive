@@ -1,9 +1,11 @@
-use crate::components::{DownloaderStatus, RoomCardStatus};
+use crate::components::{DownloaderStatus, RoomCard, RoomCardStatus};
 use crate::core::downloader::BLiveDownloader;
+use crate::core::http_client::room::LiveRoomInfoData;
+use crate::core::http_client::user::LiveUserInfo;
 use crate::logger::{log_config_change, log_user_action};
 use crate::settings::RoomSettings;
 use crate::{core::HttpClient, settings::GlobalSettings};
-use gpui::{App, Global};
+use gpui::{App, Global, WeakEntity};
 use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,11 +15,13 @@ pub struct RoomCardState {
     pub room_id: u64,
     pub status: RoomCardStatus,
     pub user_stop: bool,
+    pub(crate) room_info: Option<LiveRoomInfoData>,
+    pub(crate) user_info: Option<LiveUserInfo>,
     pub downloader: Option<Arc<BLiveDownloader>>,
     pub downloader_status: Option<DownloaderStatus>,
     pub reconnecting: bool,
-    pub settings: RoomSettings,
     pub reconnect_manager: ReconnectManager,
+    pub entity: Option<WeakEntity<RoomCard>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -66,15 +70,17 @@ impl ReconnectManager {
 }
 
 impl RoomCardState {
-    pub fn new(room_id: u64, settings: RoomSettings) -> Self {
+    pub fn new(room_id: u64) -> Self {
         Self {
             room_id,
             status: RoomCardStatus::default(),
+            entity: None,
+            room_info: None,
+            user_info: None,
             user_stop: false,
             downloader: None,
             downloader_status: None,
             reconnecting: false,
-            settings,
             reconnect_manager: ReconnectManager::new(
                 10,
                 Duration::from_secs(1),
@@ -109,24 +115,9 @@ impl AppState {
                 Some(&format!("共{}个房间", global_settings.rooms.len())),
             );
 
+            let settings = global_settings.clone();
             for room_settings in global_settings.rooms.iter_mut() {
-                *room_settings = RoomSettings {
-                    room_id: room_settings.room_id,
-                    strategy: Some(room_settings.strategy.unwrap_or(global_settings.strategy)),
-                    quality: Some(room_settings.quality.unwrap_or(global_settings.quality)),
-                    format: Some(room_settings.format.unwrap_or(global_settings.format)),
-                    codec: Some(room_settings.codec.unwrap_or(global_settings.codec)),
-                    record_name: room_settings.record_name.clone(),
-                    record_dir: match room_settings
-                        .record_dir
-                        .clone()
-                        .unwrap_or_default()
-                        .is_empty()
-                    {
-                        true => Some(global_settings.record_dir.clone()),
-                        false => room_settings.record_dir.clone(),
-                    },
-                }
+                *room_settings = room_settings.merge_global(&settings)
             }
         }
 
@@ -148,6 +139,24 @@ impl AppState {
         cx.global_mut::<Self>()
     }
 
+    pub fn add_room(&mut self, settings: RoomSettings) {
+        self.settings.rooms.push(settings);
+    }
+
+    pub fn has_room(&self, room_id: u64) -> bool {
+        self.settings
+            .rooms
+            .iter()
+            .any(|settings| settings.room_id == room_id)
+    }
+
+    pub fn get_room_settings(&self, room_id: u64) -> Option<&RoomSettings> {
+        self.settings
+            .rooms
+            .iter()
+            .find(|settings| settings.room_id == room_id)
+    }
+
     pub fn get_room_state(&self, room_id: u64) -> Option<&RoomCardState> {
         self.room_states
             .iter()
@@ -160,14 +169,20 @@ impl AppState {
             .find(|state| state.room_id == room_id)
     }
 
-    pub fn add_room_state(&mut self, room_id: u64, settings: RoomSettings) {
+    pub fn add_room_state(&mut self, room_id: u64) {
         if !self
             .room_states
             .iter()
             .any(|state| state.room_id == room_id)
         {
-            self.room_states.push(RoomCardState::new(room_id, settings));
+            self.room_states.push(RoomCardState::new(room_id));
         }
+    }
+
+    pub fn has_room_state(&self, room_id: u64) -> bool {
+        self.room_states
+            .iter()
+            .any(|state| state.room_id == room_id)
     }
 
     pub fn remove_room_state(&mut self, room_id: u64) {

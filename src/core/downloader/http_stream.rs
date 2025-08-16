@@ -1,6 +1,6 @@
 use crate::core::downloader::{
-    DownloadConfig, DownloadEvent, DownloadStatus, Downloader, DownloaderContext, DownloaderError,
-    REFERER, USER_AGENT,
+    DownloadConfig, DownloadEvent, Downloader, DownloaderContext, DownloaderError, REFERER,
+    USER_AGENT,
 };
 use crate::settings::{Strategy, StreamCodec};
 use anyhow::{Context, Result};
@@ -67,7 +67,6 @@ impl Downloader for HttpStreamDownloader {
 
         // 更新状态
         self.context.set_running(true);
-        self.context.set_status(DownloadStatus::Downloading);
 
         let config = self.config.clone();
         let output_path = config.output_path.clone();
@@ -304,7 +303,6 @@ impl Downloader for HttpStreamDownloader {
 
     async fn stop(&mut self) -> Result<()> {
         self.context.set_running(false);
-        self.context.set_status(DownloadStatus::NotStarted);
 
         if let Some(stop_rx) = self.stop_rx.take() {
             match stop_rx.await {
@@ -318,9 +316,5 @@ impl Downloader for HttpStreamDownloader {
         }
 
         Ok(())
-    }
-
-    fn status(&self) -> DownloadStatus {
-        self.context.get_status()
     }
 }

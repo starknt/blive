@@ -437,6 +437,21 @@ impl RoomSettings {
             record_name: DEFAULT_RECORD_NAME.to_string(),
         }
     }
+
+    pub fn merge_global(&mut self, global_settings: &GlobalSettings) -> Self {
+        Self {
+            room_id: self.room_id,
+            strategy: Some(self.strategy.unwrap_or(global_settings.strategy)),
+            quality: Some(self.quality.unwrap_or(global_settings.quality)),
+            format: Some(self.format.unwrap_or(global_settings.format)),
+            codec: Some(self.codec.unwrap_or(global_settings.codec)),
+            record_name: self.record_name.clone(),
+            record_dir: match self.record_dir.clone().unwrap_or_default().is_empty() {
+                true => Some(global_settings.record_dir.clone()),
+                false => self.record_dir.clone(),
+            },
+        }
+    }
 }
 
 /// 配置迁移器

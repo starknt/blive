@@ -1,24 +1,20 @@
 use crate::{
     components::room_settings_modal::{RoomSettingsModal, RoomSettingsModalEvent},
     core::{
-        HttpClient,
         downloader::{
             BLiveDownloader,
             context::DownloaderEvent,
             utils::{pretty_bytes, pretty_duration},
         },
-        http_client::{
-            room::{LiveRoomInfoData, LiveStatus},
-            user::LiveUserInfo,
-        },
+        http_client::room::LiveStatus,
     },
     logger::log_user_action,
     settings::RoomSettings,
     state::{AppState, RoomCardState},
 };
 use gpui::{
-    App, ClickEvent, Entity, EntityId, EventEmitter, ObjectFit, SharedString, Subscription,
-    WeakEntity, Window, div, img, prelude::*, px,
+    App, ClickEvent, Entity, EntityId, EventEmitter, ObjectFit, SharedString, Subscription, Window,
+    div, img, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme as _, ContextModal, Disableable, Icon, IconName, StyledExt,
@@ -27,7 +23,7 @@ use gpui_component::{
     skeleton::Skeleton,
     v_flex,
 };
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub enum RoomCardEvent {
@@ -61,11 +57,8 @@ pub enum DownloaderStatus {
 }
 
 pub struct RoomCard {
-    client: HttpClient,
     settings: RoomSettings,
     pub settings_modal: Entity<RoomSettingsModal>,
-    pub(crate) room_info: Option<LiveRoomInfoData>,
-    pub(crate) user_info: Option<LiveUserInfo>,
     pub downloader_speed: Option<f32>,
     pub downloader: Option<Arc<BLiveDownloader>>,
     _subscriptions: Vec<Subscription>,
@@ -73,18 +66,14 @@ pub struct RoomCard {
 
 impl RoomCard {
     fn new(
-        client: HttpClient,
         settings: RoomSettings,
         settings_modal: Entity<RoomSettingsModal>,
         subscriptions: Vec<Subscription>,
         downloader: Option<Arc<BLiveDownloader>>,
     ) -> Self {
         Self {
-            client,
             settings,
             settings_modal,
-            room_info: None,
-            user_info: None,
             downloader_speed: None,
             downloader,
             _subscriptions: subscriptions,
@@ -93,66 +82,10 @@ impl RoomCard {
 
     pub fn view(
         settings: RoomSettings,
-        client: HttpClient,
         downloader: Option<Arc<BLiveDownloader>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let room_id = settings.room_id;
-
-        let task_client = client.clone();
-        cx.spawn(async move |this: WeakEntity<RoomCard>, cx| {
-            loop {
-                if !this.is_upgradable() {
-                    break;
-                }
-
-                if let Some(this) = this.upgrade() {
-                    let (room_data, user_data) = futures::join!(
-                        task_client.get_live_room_info(room_id),
-                        task_client.get_live_room_user_info(room_id)
-                    );
-
-                    match (room_data, user_data) {
-                        (Ok(room_info), Ok(user_info)) => {
-                            let _ = this.update(cx, |this, cx| {
-                                let now_room_live_status = room_info.live_status;
-
-                                this.user_info = Some(user_info.info);
-                                this.room_info = Some(room_info);
-
-                                cx.emit(RoomCardEvent::LiveStatusChanged(now_room_live_status));
-                                cx.notify();
-                            });
-                        }
-                        (Ok(room_info), Err(_)) => {
-                            let _ = this.update(cx, |this: &mut RoomCard, cx| {
-                                let now_room_live_status = room_info.live_status;
-                                this.room_info = Some(room_info);
-
-                                cx.emit(RoomCardEvent::LiveStatusChanged(now_room_live_status));
-                                cx.notify();
-                            });
-                        }
-                        (Err(_), Ok(user_info)) => {
-                            let _ = this.update(cx, |this, cx| {
-                                this.user_info = Some(user_info.info);
-                                cx.notify();
-                            });
-                        }
-                        (Err(_), Err(_)) => {
-                            // nothing
-                        }
-                    }
-                }
-
-                cx.background_executor()
-                    .timer(Duration::from_secs(10))
-                    .await;
-            }
-        })
-        .detach();
-
         let settings_modal = RoomSettingsModal::view(settings.clone(), window, cx);
 
         let subscription = vec![
@@ -219,13 +152,7 @@ impl RoomCard {
             cx.subscribe_in(&cx.entity(), window, Self::on_downloader_event),
         ];
 
-        if let Some(downloader) = downloader.clone() {
-            downloader
-                .context
-                .update_room_card_entity(cx.entity().downgrade());
-        }
-
-        Self::new(client, settings, settings_modal, subscription, downloader)
+        Self::new(settings, settings_modal, subscription, downloader)
     }
 
     // 从全局状态获取房间状态
@@ -309,72 +236,6 @@ impl RoomCard {
                         state.user_stop = false;
                     });
                 }
-
-                let room_state = self.get_room_state(cx).unwrap();
-
-                if room_state.user_stop || room_state.downloader.is_some() {
-                    return;
-                }
-
-                let live_status: LiveStatus = match &self.room_info {
-                    Some(room_info) => room_info.live_status,
-                    None => LiveStatus::Offline,
-                };
-
-                match live_status {
-                    LiveStatus::Live => {
-                        self.update_room_state(cx, |state| {
-                            state.status = RoomCardStatus::LiveRecording;
-                            state.reconnect_manager.reset_attempts();
-                        });
-
-                        let room_info = self.room_info.clone().unwrap_or_default();
-                        let user_info = self.user_info.clone().unwrap_or_default();
-                        let client = self.client.clone();
-                        let setting = self.settings.clone();
-                        let room_id = self.settings.room_id;
-
-                        let downloader = Arc::new(BLiveDownloader::new(
-                            room_info,
-                            user_info,
-                            setting.quality.unwrap_or_default(),
-                            setting.format.unwrap_or_default(),
-                            setting.codec.unwrap_or_default(),
-                            setting.strategy.unwrap_or_default(),
-                            client,
-                            self.settings.room_id,
-                        ));
-
-                        downloader.context.update_room_card_entity(this.downgrade());
-
-                        self.downloader = Some(downloader.clone());
-                        cx.update_global(|state: &mut AppState, _| {
-                            if let Some(room_state) = state.get_room_state_mut(room_id) {
-                                room_state.downloader = Some(downloader.clone());
-                            }
-                        });
-
-                        cx.spawn(async move |_, cx| {
-                            match downloader
-                                .start(cx, &setting.record_dir.unwrap_or_default())
-                                .await
-                            {
-                                Ok(_) => {
-                                    // 下载成功完成，状态会通过事件回调自动更新
-                                }
-                                Err(e) => {
-                                    // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
-                                    eprintln!("下载器启动失败: {e}");
-                                }
-                            }
-                        })
-                        .detach();
-                    }
-                    LiveStatus::Carousel | LiveStatus::Offline => {
-                        cx.emit(RoomCardEvent::StopRecording(false));
-                    }
-                }
-
                 cx.notify();
             }
             RoomCardEvent::StopRecording(user_action) => {
@@ -436,26 +297,7 @@ impl RoomCard {
                 cx.emit(RoomCardEvent::StopRecording(false));
             }
             DownloaderEvent::Reconnecting => {
-                let state = self.get_room_state(cx).unwrap();
-                let room_id = self.settings.room_id;
-                if state.reconnect_manager.should_reconnect() {
-                    let delay = state.reconnect_manager.calculate_delay();
-                    let record_dir = state.settings.record_dir.clone().unwrap_or_default();
-                    let downloader = state.downloader.clone().unwrap();
-
-                    cx.spawn(async move |_, cx| {
-                        cx.background_executor().timer(delay).await;
-                        let _ = downloader.restart(cx, &record_dir).await;
-                        let _ = cx.update_global(|state: &mut AppState, _| {
-                            state
-                                .get_room_state_mut(room_id)
-                                .unwrap()
-                                .reconnect_manager
-                                .increment_attempt();
-                        });
-                    })
-                    .detach();
-                }
+                self.downloader_speed = None;
             }
             DownloaderEvent::Error { .. } => {
                 self.downloader_speed = None;
@@ -472,8 +314,10 @@ impl EventEmitter<DownloaderEvent> for RoomCard {}
 
 impl Render for RoomCard {
     fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let room_info = &self.room_info;
-        let user_info = &self.user_info;
+        let room_state = self.get_room_state(cx).unwrap_or_default().clone();
+
+        let room_info = &room_state.room_info;
+        let user_info = &room_state.user_info;
 
         if room_info.is_none() || user_info.is_none() {
             return v_flex()
@@ -560,7 +404,7 @@ impl Render for RoomCard {
                                             .border(px(1.0))
                                             .border_color(cx.theme().border)
                                             .size_full()
-                                            .w_16(),
+                                            .w_24(),
                                     ),
                             ),
                     ),
@@ -578,7 +422,6 @@ impl Render for RoomCard {
 
         let room_info = room_info.clone().unwrap_or_default();
         let user_info = user_info.clone().unwrap_or_default();
-        let room_state = self.get_room_state(cx).unwrap_or_default().clone();
 
         div()
             .rounded_lg()
@@ -702,8 +545,8 @@ impl Render for RoomCard {
                                                         );
 
                                                         if matches!(
-                                                            room_info.live_status,
-                                                            LiveStatus::Live
+                                                            room_state.status,
+                                                            RoomCardStatus::LiveRecording
                                                         ) {
                                                             this.icon(pause_icon)
                                                         } else {

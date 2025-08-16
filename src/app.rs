@@ -1,18 +1,16 @@
+use std::{sync::Arc, time::Duration};
+
 use gpui::{
-    App, AppContext, Axis, ClickEvent, Entity, EventEmitter, Subscription, Window, div, prelude::*,
-    px,
+    App, AppContext, Axis, Entity, EventEmitter, Subscription, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    ActiveTheme as _, ContextModal, Root, StyledExt,
-    button::{Button, ButtonVariants},
-    h_flex,
-    notification::Notification,
-    text::Text,
-    v_flex,
+    ActiveTheme as _, ContextModal, Root, StyledExt, h_flex, notification::Notification,
+    text::Text, v_flex,
 };
 
 use crate::{
     components::{RoomCard, RoomCardEvent, RoomCardStatus, RoomInput, RoomInputEvent},
+    core::{downloader::BLiveDownloader, http_client::room::LiveStatus},
     logger::log_user_action,
     settings::RoomSettings,
     state::AppState,
@@ -41,8 +39,8 @@ impl BLiveApp {
         cx: &mut Context<Self>,
     ) -> Self {
         let title_bar = cx.new(|cx| AppTitleBar::new(title, window, cx));
-        let room_num = 1804892069;
-        let room_input = RoomInput::view(room_num, window, cx);
+        let room_id = 1804892069;
+        let room_input = RoomInput::view(room_id, window, cx);
 
         let _subscriptions = vec![
             cx.subscribe_in(&room_input, window, Self::on_room_input_change),
@@ -56,7 +54,7 @@ impl BLiveApp {
         }
 
         Self {
-            room_id: room_num,
+            room_id,
             room_input,
             title_bar,
             room_cards: vec![],
@@ -78,72 +76,31 @@ impl BLiveApp {
         &mut self,
         _: &Entity<RoomInput>,
         event: &RoomInputEvent,
-        _: &mut Window,
-        _: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        let RoomInputEvent::RoomInputChange(room_num) = event;
-        self.room_id = *room_num;
-        log_user_action("房间号输入变化", Some(&format!("新房间号: {room_num}")));
-    }
+        let RoomInputEvent::RoomInputSubmit(room_id) = event;
+        self.room_id = *room_id;
 
-    /// 添加录制房间
-    fn add_recording(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.room_id > 0 {
-            let room_id = self.room_id;
+        let room_id = self.room_id;
 
-            log_user_action("点击添加录制按钮", Some(&format!("房间号: {room_id}")));
+        log_user_action("点击添加录制按钮", Some(&format!("房间号: {room_id}")));
 
-            cx.update_global(|state: &mut AppState, cx| {
-                // 检查是否已经存在
-                if state
-                    .settings
-                    .rooms
-                    .iter()
-                    .any(|room| room.room_id == room_id)
-                {
-                    log_user_action("尝试添加重复房间", Some(&format!("房间号: {room_id}")));
-                    window.push_notification(
-                        Notification::warning(format!("不能重复监听 {room_id}")),
-                        cx,
-                    );
-                    return;
-                }
-
-                let global_settings = state.settings.clone();
+        cx.update_global(|state: &mut AppState, cx| {
+            // 检查是否已经存在
+            if state.has_room(room_id) {
+                log_user_action("尝试添加重复房间", Some(&format!("房间号: {room_id}")));
+                window.push_notification(
+                    Notification::warning(format!("不能重复监听 {room_id}")),
+                    cx,
+                );
+            } else {
                 let settings = RoomSettings::new(room_id);
-                state.add_room_state(room_id, settings.clone());
-                state.settings.rooms.push(settings.clone());
-                self.room_cards.push(cx.new(|cx| {
-                    RoomCard::view(
-                        RoomSettings {
-                            room_id,
-                            strategy: Some(settings.strategy.unwrap_or(global_settings.strategy)),
-                            quality: Some(settings.quality.unwrap_or(global_settings.quality)),
-                            format: Some(settings.format.unwrap_or(global_settings.format)),
-                            codec: Some(settings.codec.unwrap_or(global_settings.codec)),
-                            record_name: settings.record_name.clone(),
-                            record_dir: match settings
-                                .record_dir
-                                .clone()
-                                .unwrap_or_default()
-                                .is_empty()
-                            {
-                                true => Some(global_settings.record_dir.clone()),
-                                false => settings.record_dir.clone(),
-                            },
-                        },
-                        state.client.clone(),
-                        None,
-                        window,
-                        cx,
-                    )
-                }));
-                cx.notify();
+                state.add_room(settings.clone());
+                cx.emit(BLiveAppEvent::InitRoom(settings));
                 log_user_action("新房间添加成功", Some(&format!("房间号: {room_id}")));
-            });
-        } else {
-            log_user_action("尝试添加无效房间", Some("房间号为0"));
-        }
+            }
+        });
     }
 }
 
@@ -158,33 +115,223 @@ impl BLiveApp {
         match event {
             BLiveAppEvent::InitRoom(settings) => {
                 cx.update_global(|state: &mut AppState, cx| {
-                    state.add_room_state(settings.room_id, settings.clone());
-                    let downloader = state
-                        .get_room_state(settings.room_id)
-                        .and_then(|room| room.downloader.clone());
-                    let room_card = cx.new(|cx| {
-                        RoomCard::view(
-                            settings.clone(),
-                            state.client.clone(),
-                            downloader,
-                            window,
-                            cx,
-                        )
-                    });
+                    let room_id = settings.room_id;
+
+                    if !state.has_room_state(room_id) {
+                        state.add_room_state(room_id);
+
+                        let client = state.client.clone();
+                        cx.spawn(async move |_, cx| {
+                            loop {
+                                let (room_data, user_data) = futures::join!(
+                                    client.get_live_room_info(room_id),
+                                    client.get_live_room_user_info(room_id)
+                                );
+
+                                match (room_data, user_data) {
+                                            (Ok(room_info), Ok(user_info)) => {
+                                                let _ = cx.update_global(|state: &mut AppState, cx| {
+                                                    let global_settings = state.settings.clone();
+                                                    let room_settings = state.get_room_settings(room_id).cloned();
+
+                                                    if let (Some(room_state), Some(mut room_settings)) =
+                                                        (state.get_room_state_mut(room_id), room_settings)
+                                                    {
+                                                        let room_settings = room_settings.merge_global(&global_settings);
+
+                                                        let live_status = room_info.live_status;
+                                                        room_state.room_info = Some(room_info);
+                                                        room_state.user_info = Some(user_info.info);
+
+                                                        match live_status {
+                                                            LiveStatus::Live => {
+                                                                if room_state.user_stop {
+                                                                    return;
+                                                                }
+
+                                                                if room_state.downloader.is_some()
+                                                                    && room_state
+                                                                        .downloader
+                                                                        .as_ref()
+                                                                        .unwrap()
+                                                                        .is_running()
+                                                                {
+                                                                    return;
+                                                                }
+
+                                                                let record_dir = room_settings.record_dir.clone().unwrap_or_default();
+                                                                match room_state.downloader.clone() {
+                                                                    Some(downloader) => {
+                                                                        cx.spawn(async move |cx| {
+                                                                            match downloader
+                                                                                .start(cx, &record_dir)
+                                                                                .await
+                                                                            {
+                                                                                Ok(_) => {
+                                                                                    // 下载成功完成，状态会通过事件回调自动更新
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
+                                                                                    eprintln!("下载器启动失败: {e}");
+                                                                                }
+                                                                            }
+                                                                        }).detach();
+                                                                    }
+                                                                    None => {
+                                                                        let room_info = room_state.room_info.clone().unwrap_or_default();
+                                                                        let user_info = room_state.user_info.clone().unwrap_or_default();
+                                                                        let client = client.clone();
+                                                                        let setting = room_settings.clone();
+
+                                                                        let downloader = Arc::new(BLiveDownloader::new(
+                                                                            room_info,
+                                                                            user_info,
+                                                                            setting.quality.unwrap_or_default(),
+                                                                            setting.format.unwrap_or_default(),
+                                                                            setting.codec.unwrap_or_default(),
+                                                                            setting.strategy.unwrap_or_default(),
+                                                                            client,
+                                                                            room_id,
+                                                                        ));
+
+                                                                        room_state.downloader = Some(downloader.clone());
+
+                                                                        cx.spawn(async move |cx| {
+                                                                            match downloader
+                                                                                .start(cx, &setting.record_dir.unwrap_or_default())
+                                                                                .await
+                                                                            {
+                                                                                Ok(_) => {
+                                                                                    // 下载成功完成，状态会通过事件回调自动更新
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
+                                                                                    eprintln!("下载器启动失败: {e}");
+                                                                                }
+                                                                            }
+                                                                        })
+                                                                        .detach();
+                                                                    }
+                                                                }
+                                                            }
+                                                            LiveStatus::Offline | LiveStatus::Carousel => {
+                                                                if room_state.downloader.is_some() {
+                                                                    if let Some(downloader) =
+                                                                        room_state.downloader.take()
+                                                                    {
+                                                                        cx.foreground_executor()
+                                                                            .spawn(async move {
+                                                                                downloader.stop().await;
+                                                                            })
+                                                                            .detach();
+
+                                                                        room_state.downloader = None;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+
+                                                        if let Some(entity) = room_state.entity.clone() {
+                                                            cx.notify(entity.entity_id());
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                            (Ok(room_info), Err(_)) => {
+                                                let _ = cx.update_global(|state: &mut AppState, cx| {
+                                                    if let Some(room_state) =
+                                                        state.get_room_state_mut(room_id)
+                                                    {
+                                                        room_state.room_info = Some(room_info);
+
+                                                        if let Some(entity) = room_state.entity.clone() {
+                                                            cx.notify(entity.entity_id());
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                            (Err(_), Ok(user_info)) => {
+                                                let _ = cx.update_global(|state: &mut AppState, cx| {
+                                                    if let Some(room_state) =
+                                                        state.get_room_state_mut(room_id)
+                                                    {
+                                                        room_state.user_info = Some(user_info.info);
+
+                                                        if let Some(entity) = room_state.entity.clone() {
+                                                            cx.notify(entity.entity_id());
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                            (Err(_), Err(_)) => {
+                                                // nothing
+                                            }
+                                }
+
+                                cx.background_executor()
+                                    .timer(Duration::from_secs(10))
+                                    .await;
+
+                                // 检查房间是否移除
+                                if let Some(removed) = cx.try_read_global(|state: &AppState, _| !state.has_room(room_id)) {
+                                    if removed {
+                                        break;
+                                    }
+                                }
+
+                                let _ = cx.update_global(|state: &mut AppState, cx| {
+                                    let global_settings = state.settings.clone();
+                                    let room_settings = state.get_room_settings(room_id).cloned();
+
+                                    if let (Some(room_state), Some(mut room_settings)) =
+                                        (state.get_room_state_mut(room_id), room_settings)
+                                    {
+                                        let room_settings = room_settings.merge_global(&global_settings);
+                                        if room_state.reconnecting {
+                                            if room_state.reconnect_manager.should_reconnect() {
+                                                let delay = room_state.reconnect_manager.calculate_delay();
+                                                let record_dir = room_settings.record_dir.clone().unwrap_or_default();
+
+                                                if let Some(downloader) = room_state.downloader.clone() {
+                                                    cx.spawn(async move |cx| {
+                                                        cx.background_executor().timer(delay).await;
+                                                        let _ = downloader.restart(cx, &record_dir).await;
+                                                    })
+                                                    .detach();
+                                                }
+
+                                                room_state.reconnect_manager.increment_attempt();
+                                                room_state.reconnecting = false;
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        })
+                        .detach();
+                    }
+
+                    let room_state = state.get_room_state_mut(room_id);
+                    let downloader = room_state.as_ref().and_then(|s| s.downloader.clone());
+
+                    let room_card = cx
+                        .new(|cx| RoomCard::view(settings.clone(),  downloader, window, cx));
 
                     let subscription = cx.subscribe(&room_card, Self::on_room_card_event);
                     self._subscriptions.push(subscription);
-                    self.room_cards.push(room_card);
+                    self.room_cards.push(room_card.clone());
+
+                    if let Some(room_state) = room_state {
+                        room_state.entity = Some(room_card.downgrade());
+                    }
 
                     log_user_action(
-                        "房间状态创建成功",
-                        Some(&format!("房间号: {}", settings.room_id)),
+                        "房间创建成功",
+                        Some(&format!("房间号: {}", room_id)),
                     );
                 });
             }
         }
-
-        cx.notify();
     }
 
     fn on_room_card_event(
@@ -257,58 +404,7 @@ impl Render for BLiveApp {
                                                     ),
                                             ),
                                     )
-                                    .child(
-                                        div()
-                                            .rounded_xl()
-                                            .p_6()
-                                            .border(px(1.0))
-                                            .border_color(cx.theme().border)
-                                            .bg(cx.theme().background)
-                                            .shadow_lg()
-                                            .child(
-                                                v_flex()
-                                                    .gap_6()
-                                                    .child(
-                                                        div()
-                                                            .font_bold()
-                                                            .text_lg()
-                                                            .child(Text::String("添加录制房间".into())),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .rounded_lg()
-                                                            .p_4()
-                                                            .bg(cx.theme().background)
-                                                            .child(
-                                                                v_flex()
-                                                                    .gap_4()
-                                                                    .child(
-                                                                        div()
-                                                                            .text_sm()
-                                                                            .text_color(cx.theme().accent_foreground)
-                                                                            .child(Text::String("请输入B站直播间房间号".into())),
-                                                                    )
-                                                                    .child(
-                                                                        h_flex()
-                                                                            .max_w_96()
-                                                                            .gap_4()
-                                                                            .items_center()
-                                                                            .child(
-                                                                                div()
-                                                                                    .flex_1()
-                                                                                    .child(self.room_input.clone()),
-                                                                            )
-                                                                            .child(
-                                                                                Button::new("添加录制")
-                                                                                    .on_click(cx.listener(Self::add_recording))
-                                                                                    .primary()
-                                                                                    .child(Text::String("添加录制".into())),
-                                                                            ),
-                                                                    ),
-                                                            ),
-                                                    ),
-                                            ),
-                                    )
+                                    .child(self.room_input.clone())
                                     .child(
                                         // 房间列表卡片
                                         div()

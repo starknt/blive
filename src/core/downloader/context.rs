@@ -4,15 +4,15 @@ use std::{
     time::Duration,
 };
 
-use gpui::{AsyncApp, WeakEntity};
+use gpui::{App, AsyncApp};
 use try_lock::TryLock;
 
 use crate::{
-    components::{DownloaderStatus, RoomCard},
+    components::{DownloaderStatus, RoomCardStatus},
     core::{
         HttpClient,
         downloader::{
-            DownloadEvent, DownloadStats, DownloadStatus,
+            DownloadEvent, DownloadStats,
             utils::{self, pretty_bytes, pretty_duration},
         },
         http_client::{room::LiveRoomInfoData, user::LiveUserInfo},
@@ -78,7 +78,6 @@ impl Default for DownloadConfig {
 
 #[derive(Debug, Clone)]
 pub struct DownloaderContext {
-    status: Arc<TryLock<DownloadStatus>>,
     pub room_id: u64,
     pub client: HttpClient,
     pub room_info: LiveRoomInfoData,
@@ -87,7 +86,6 @@ pub struct DownloaderContext {
     pub format: VideoContainer,
     pub codec: StreamCodec,
     pub strategy: Strategy,
-    pub entity: Arc<TryLock<Option<WeakEntity<RoomCard>>>>,
     stats: Arc<TryLock<DownloadStats>>,
     is_running: Arc<atomic::AtomicBool>,
     event_queue: Arc<TryLock<VecDeque<DownloadEvent>>>,
@@ -106,8 +104,6 @@ impl DownloaderContext {
         codec: StreamCodec,
     ) -> Self {
         Self {
-            entity: Arc::new(TryLock::new(None)),
-            status: Arc::new(TryLock::new(DownloadStatus::NotStarted)),
             room_id,
             client,
             room_info,
@@ -127,25 +123,16 @@ impl DownloaderContext {
         self.is_running
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.event_queue.try_lock().unwrap().clear();
-        self.set_status(DownloadStatus::NotStarted);
-    }
-
-    pub fn set_status(&self, status: DownloadStatus) {
-        if let Some(mut status_guard) = self.status.try_lock() {
-            *status_guard = status;
-        }
-    }
-
-    pub fn get_status(&self) -> DownloadStatus {
-        self.status.try_lock().unwrap().clone()
     }
 
     pub fn emit_downloader_event(&self, cx: &mut AsyncApp, event: DownloaderEvent) {
-        if let Some(entity) = self.entity.try_lock().unwrap().as_ref() {
-            let _ = entity.update(cx, |_, cx| {
-                cx.emit(event);
-            });
-        }
+        self.update_global_state(cx, |state, cx| {
+            if let Some(entity) = state.entity.clone() {
+                let _ = entity.update(cx, |_, cx| {
+                    cx.emit(event);
+                });
+            }
+        });
     }
 
     /// 推送事件到队列
@@ -192,7 +179,8 @@ impl DownloaderContext {
                 );
 
                 // 更新全局状态
-                self.update_global_state(cx, |state| {
+                self.update_global_state(cx, |state, _| {
+                    state.status = RoomCardStatus::LiveRecording;
                     state.downloader_status = Some(DownloaderStatus::Started {
                         file_path: file_path.to_owned(),
                     });
@@ -220,7 +208,7 @@ impl DownloaderContext {
                 }
 
                 // 更新全局状态
-                self.update_global_state(cx, |state| {
+                self.update_global_state(cx, |state, _| {
                     state.downloader_status = Some(DownloaderStatus::Error {
                         cause: error.to_string(),
                     });
@@ -228,6 +216,10 @@ impl DownloaderContext {
             }
             DownloadEvent::Reconnecting => {
                 self.emit_downloader_event(cx, DownloaderEvent::Reconnecting);
+
+                self.update_global_state(cx, |state, _| {
+                    state.reconnecting = true;
+                });
             }
             DownloadEvent::Completed {
                 file_size,
@@ -249,7 +241,8 @@ impl DownloaderContext {
                 );
 
                 // 更新全局状态
-                self.update_global_state(cx, |state| {
+                self.update_global_state(cx, |state, _| {
+                    state.status = RoomCardStatus::WaitLiveStreaming;
                     state.downloader_status = Some(DownloaderStatus::Completed {
                         file_path: file_path.to_owned(),
                         file_size: *file_size,
@@ -281,7 +274,7 @@ impl DownloaderContext {
                 // 只在调试模式下记录详细进度，避免日志过多
                 #[cfg(debug_assertions)]
                 tracing::debug!(
-                    "录制进度 - 房间: {}, 已下载: {:.2}MB, 速度: {:.1}kb/s, 时长: {}秒",
+                    "录制进度 - 房间: {}, 已下载: {:.2}MB, 速度: {:.1}kb/s, 时长: {}",
                     self.room_info.room_id,
                     utils::pretty_bytes(*bytes_downloaded),
                     *download_speed_kbps,
@@ -377,19 +370,12 @@ impl DownloaderContext {
     /// 更新全局状态
     pub fn update_global_state<F>(&self, cx: &mut AsyncApp, updater: F)
     where
-        F: FnOnce(&mut RoomCardState),
+        F: FnOnce(&mut RoomCardState, &mut App),
     {
-        let _ = cx.update_global(|state: &mut AppState, _| {
+        let _ = cx.update_global(|state: &mut AppState, cx| {
             if let Some(room_state) = state.get_room_state_mut(self.room_id) {
-                updater(room_state);
+                updater(room_state, cx);
             }
         });
-    }
-
-    /// 更新房间卡片
-    pub fn update_room_card_entity(&self, entity: WeakEntity<RoomCard>) {
-        if let Some(mut entity_guard) = self.entity.try_lock() {
-            *entity_guard = Some(entity);
-        }
     }
 }

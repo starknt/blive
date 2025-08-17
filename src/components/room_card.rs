@@ -17,12 +17,14 @@ use gpui::{
     div, img, prelude::*, px,
 };
 use gpui_component::{
-    ActiveTheme as _, ContextModal, Disableable, Icon, IconName, StyledExt,
+    ActiveTheme as _, ColorName, ContextModal, Disableable, Icon, IconName, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
     skeleton::Skeleton,
+    tag::Tag,
     v_flex,
 };
+use rand::seq::IndexedRandom;
 use std::{path::Path, sync::Arc};
 
 #[derive(Clone, Debug)]
@@ -61,6 +63,9 @@ pub struct RoomCard {
     pub settings_modal: Entity<RoomSettingsModal>,
     pub downloader_speed: Option<f32>,
     pub downloader: Option<Arc<BLiveDownloader>>,
+    area_tag_color: ColorName,
+    live_time_tag_color: ColorName,
+    live_attention_tag_color: ColorName,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -71,11 +76,23 @@ impl RoomCard {
         subscriptions: Vec<Subscription>,
         downloader: Option<Arc<BLiveDownloader>>,
     ) -> Self {
+        let tag_colors: Vec<ColorName> = ColorName::all()
+            .into_iter()
+            .filter(|color| *color != ColorName::Gray)
+            .collect();
+
+        let area_tag_color = tag_colors.choose(&mut rand::rng()).unwrap();
+        let live_time_tag_color = tag_colors.choose(&mut rand::rng()).unwrap();
+        let live_attention_tag_color = tag_colors.choose(&mut rand::rng()).unwrap();
+
         Self {
             settings,
             settings_modal,
             downloader_speed: None,
             downloader,
+            area_tag_color: *area_tag_color,
+            live_time_tag_color: *live_time_tag_color,
+            live_attention_tag_color: *live_attention_tag_color,
             _subscriptions: subscriptions,
         }
     }
@@ -426,6 +443,8 @@ impl Render for RoomCard {
         let room_info = room_info.clone().unwrap_or_default();
         let user_info = user_info.clone().unwrap_or_default();
 
+        let live_time = room_info.live_time.split(" ").next().unwrap_or_default();
+
         div()
             .rounded_lg()
             .p_4()
@@ -517,11 +536,13 @@ impl Render for RoomCard {
                                                         ),
                                                         |div| {
                                                             div.child(
-                                                                format!(
-                                                                    "{} 人观看",
-                                                                    room_info.online
+                                                                Tag::color(
+                                                                    self.live_attention_tag_color,
                                                                 )
-                                                                .into_element(),
+                                                                .child(format!(
+                                                                    "🔥 {}",
+                                                                    room_info.attention
+                                                                )),
                                                             )
                                                         },
                                                     )
@@ -532,11 +553,8 @@ impl Render for RoomCard {
                                                         ),
                                                         |div| {
                                                             div.child(
-                                                                format!(
-                                                                    "分区: {}",
-                                                                    room_info.area_name
-                                                                )
-                                                                .into_element(),
+                                                                Tag::color(self.area_tag_color)
+                                                                    .child(room_info.area_name),
                                                             )
                                                         },
                                                     )
@@ -547,11 +565,10 @@ impl Render for RoomCard {
                                                         ),
                                                         |div| {
                                                             div.child(
-                                                                format!(
-                                                                    "开始时间: {}",
-                                                                    room_info.live_time
+                                                                Tag::color(
+                                                                    self.live_time_tag_color,
                                                                 )
-                                                                .into_element(),
+                                                                .child(live_time.to_owned()),
                                                             )
                                                         },
                                                     ),
@@ -560,17 +577,10 @@ impl Render for RoomCard {
                             )
                             .child(
                                 h_flex()
+                                    .px_4()
+                                    .flex_wrap()
+                                    .max_w_2_5()
                                     .gap_2()
-                                    .child(Button::new("open").label("打开直播间").on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            if let Some(state) = this.get_room_state(cx) {
-                                                cx.open_url(&format!(
-                                                    "https://live.bilibili.com/{}",
-                                                    state.room_info.unwrap_or_default().room_id
-                                                ));
-                                            }
-                                        }),
-                                    ))
                                     .child(
                                         Button::new("record")
                                             .primary()
@@ -641,6 +651,19 @@ impl Render for RoomCard {
                                             })
                                             .label("删除")
                                             .on_click(cx.listener(Self::on_delete)),
+                                    )
+                                    .child(
+                                        Button::new("open")
+                                            .icon(IconName::BookOpen)
+                                            .label("打开直播间")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                if let Some(state) = this.get_room_state(cx) {
+                                                    cx.open_url(&format!(
+                                                        "https://live.bilibili.com/{}",
+                                                        state.room_info.unwrap_or_default().room_id
+                                                    ));
+                                                }
+                                            })),
                                     ),
                             ),
                     )

@@ -289,8 +289,11 @@ impl RoomCard {
             DownloaderEvent::Started { .. } => {
                 self.downloader_speed = None;
             }
-            DownloaderEvent::Progress { speed } => {
-                self.downloader_speed = Some(*speed);
+            DownloaderEvent::Progress {
+                download_speed_kbps,
+                ..
+            } => {
+                self.downloader_speed = Some(*download_speed_kbps);
             }
             DownloaderEvent::Completed { .. } => {
                 self.downloader_speed = None;
@@ -428,9 +431,13 @@ impl Render for RoomCard {
             .p_4()
             .border(px(1.0))
             .border_color(cx.theme().border)
-            .when(matches!(room_state.downloader_status, Some(DownloaderStatus::Error { .. })), |div| {
-                div.border_color(cx.theme().red)
-            })
+            .when(
+                matches!(
+                    room_state.downloader_status,
+                    Some(DownloaderStatus::Error { .. })
+                ),
+                |div| div.border_color(cx.theme().red),
+            )
             .when(room_state.reconnecting, |div| {
                 div.border_color(cx.theme().warning)
             })
@@ -494,13 +501,15 @@ impl Render for RoomCard {
                                                             _ => gpui::rgb(0x6b7280),
                                                         },
                                                     ))
-                                                    .child(
-                                                        match room_info.live_status {
-                                                            LiveStatus::Live => "直播中".into_element(),
-                                                            LiveStatus::Carousel => "轮播中".into_element(),
-                                                            LiveStatus::Offline => "未开播".into_element(),
+                                                    .child(match room_info.live_status {
+                                                        LiveStatus::Live => "直播中".into_element(),
+                                                        LiveStatus::Carousel => {
+                                                            "轮播中".into_element()
                                                         }
-                                                    )
+                                                        LiveStatus::Offline => {
+                                                            "未开播".into_element()
+                                                        }
+                                                    })
                                                     .when(
                                                         matches!(
                                                             room_state.status,
@@ -516,82 +525,103 @@ impl Render for RoomCard {
                                                             )
                                                         },
                                                     )
-                                                    .when(matches!(room_info.live_status, LiveStatus::Live), |div| div.child(format!("分区: {}", room_info.area_name).into_element()))
-                                                    .when(matches!(room_info.live_status, LiveStatus::Live), |div| div.child(format!("开始时间: {}", room_info.live_time).into_element()))
+                                                    .when(
+                                                        matches!(
+                                                            room_info.live_status,
+                                                            LiveStatus::Live
+                                                        ),
+                                                        |div| {
+                                                            div.child(
+                                                                format!(
+                                                                    "分区: {}",
+                                                                    room_info.area_name
+                                                                )
+                                                                .into_element(),
+                                                            )
+                                                        },
+                                                    )
+                                                    .when(
+                                                        matches!(
+                                                            room_info.live_status,
+                                                            LiveStatus::Live
+                                                        ),
+                                                        |div| {
+                                                            div.child(
+                                                                format!(
+                                                                    "开始时间: {}",
+                                                                    room_info.live_time
+                                                                )
+                                                                .into_element(),
+                                                            )
+                                                        },
+                                                    ),
                                             ),
                                     ),
                             )
                             .child(
                                 h_flex()
                                     .gap_2()
-                                    .when(
-                                        matches!(
-                                            room_state.status,
-                                            RoomCardStatus::LiveRecording
-                                                | RoomCardStatus::WaitLiveStreaming
-                                        ),
-                                        |div| {
-                                            div.child(h_flex().flex_1().children(vec![
-                                                Button::new("record")
-                                                    .primary()
-                                                    .map(|this| {
-                                                        let play_icon = Icon::default();
-                                                        let play_icon = play_icon.path(
-                                                            SharedString::new("icons/play.svg"),
+                                    .child(Button::new("open").label("打开直播间").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            if let Some(state) = this.get_room_state(cx) {
+                                                cx.open_url(&format!(
+                                                    "https://live.bilibili.com/{}",
+                                                    state.room_info.unwrap_or_default().room_id
+                                                ));
+                                            }
+                                        }),
+                                    ))
+                                    .child(
+                                        Button::new("record")
+                                            .primary()
+                                            .map(|this| {
+                                                let play_icon = Icon::default();
+                                                let play_icon = play_icon
+                                                    .path(SharedString::new("icons/play.svg"));
+                                                let pause_icon = Icon::default();
+                                                let pause_icon = pause_icon
+                                                    .path(SharedString::new("icons/pause.svg"));
+
+                                                if matches!(
+                                                    room_state.status,
+                                                    RoomCardStatus::LiveRecording
+                                                ) {
+                                                    this.icon(pause_icon)
+                                                } else {
+                                                    this.icon(play_icon)
+                                                }
+                                            })
+                                            .disabled(!matches!(
+                                                room_info.live_status,
+                                                LiveStatus::Live
+                                            ))
+                                            .label(match &room_state.status {
+                                                RoomCardStatus::WaitLiveStreaming => "开始录制",
+                                                RoomCardStatus::LiveRecording => "停止录制",
+                                            })
+                                            .on_click(cx.listener(|card, _, _, cx| {
+                                                let room_id = card.settings.room_id;
+                                                match &card.get_room_state(cx).unwrap().status {
+                                                    RoomCardStatus::WaitLiveStreaming => {
+                                                        log_user_action(
+                                                            "开始录制",
+                                                            Some(&format!("房间号: {room_id}")),
                                                         );
-                                                        let pause_icon = Icon::default();
-                                                        let pause_icon = pause_icon.path(
-                                                            SharedString::new("icons/pause.svg"),
+
+                                                        cx.emit(RoomCardEvent::StartRecording(
+                                                            true,
+                                                        ));
+                                                    }
+                                                    RoomCardStatus::LiveRecording => {
+                                                        log_user_action(
+                                                            "停止录制",
+                                                            Some(&format!("房间号: {room_id}")),
                                                         );
 
-                                                        if matches!(
-                                                            room_state.status,
-                                                            RoomCardStatus::LiveRecording
-                                                        ) {
-                                                            this.icon(pause_icon)
-                                                        } else {
-                                                            this.icon(play_icon)
-                                                        }
-                                                    })
-                                                    .disabled(!matches!(
-                                                        room_info.live_status,
-                                                        LiveStatus::Live
-                                                    ))
-                                                    .label(match &room_state.status {
-                                                        RoomCardStatus::WaitLiveStreaming => {
-                                                            "开始录制"
-                                                        }
-                                                        RoomCardStatus::LiveRecording => {
-                                                            "停止录制"
-                                                        }
-                                                    })
-                                                    .on_click(cx.listener(|card, _, _, cx| {
-                                                        let room_id = card.settings.room_id;
-                                                        match &card.get_room_state(cx).unwrap().status {
-                                                            RoomCardStatus::WaitLiveStreaming => {
-                                                                log_user_action(
-                                                                    "开始录制",
-                                                                    Some(&format!(
-                                                                        "房间号: {room_id}"
-                                                                    )),
-                                                                );
-
-                                                                cx.emit(RoomCardEvent::StartRecording(true));
-                                                            }
-                                                            RoomCardStatus::LiveRecording => {
-                                                                log_user_action(
-                                                                    "停止录制",
-                                                                    Some(&format!(
-                                                                        "房间号: {room_id}"
-                                                                    )),
-                                                                );
-
-                                                                cx.emit(RoomCardEvent::StopRecording(true));
-                                                            }
-                                                        };
-                                                    })),
-                                            ]))
-                                        },
+                                                        cx.emit(RoomCardEvent::StopRecording(true));
+                                                    }
+                                                };
+                                            })),
                                     )
                                     .child(
                                         Button::new("settings")
@@ -620,12 +650,29 @@ impl Render for RoomCard {
                             .items_center()
                             .when_some(room_state.downloader_status.clone(), |div, status| {
                                 match status {
-                                    DownloaderStatus::Started { ref file_path } => {
-                                        div.child(format!("录制中: {}", Path::new(file_path).file_name().unwrap_or_default().to_string_lossy()).into_element())
-                                    }
-                                    DownloaderStatus::Completed { ref file_path, ref file_size, ref duration } => {
-                                        div.child(format!("录制完成: {} 大小: {} 时长: {}", file_path, pretty_bytes(*file_size), pretty_duration(*duration)).into_element())
-                                    }
+                                    DownloaderStatus::Started { ref file_path } => div.child(
+                                        format!(
+                                            "录制中: {}",
+                                            Path::new(file_path)
+                                                .file_name()
+                                                .unwrap_or_default()
+                                                .to_string_lossy()
+                                        )
+                                        .into_element(),
+                                    ),
+                                    DownloaderStatus::Completed {
+                                        ref file_path,
+                                        ref file_size,
+                                        ref duration,
+                                    } => div.child(
+                                        format!(
+                                            "录制完成: {} 大小: {} 时长: {}",
+                                            file_path,
+                                            pretty_bytes(*file_size),
+                                            pretty_duration(*duration)
+                                        )
+                                        .into_element(),
+                                    ),
                                     DownloaderStatus::Error { ref cause } => {
                                         div.child(format!("录制失败: {}", cause).into_element())
                                     }
@@ -633,7 +680,7 @@ impl Render for RoomCard {
                             })
                             .when_some(self.downloader_speed, |div, speed| {
                                 div.child(format!("{speed:.2} Kb/s").into_element())
-                            })
+                            }),
                     ),
             )
     }

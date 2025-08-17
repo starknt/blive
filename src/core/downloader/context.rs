@@ -12,7 +12,8 @@ use crate::{
     core::{
         HttpClient,
         downloader::{
-            DownloadEvent, DownloadStats,
+            DownloadStats,
+            error::DownloaderError,
             utils::{self, pretty_bytes, pretty_duration},
         },
         http_client::{room::LiveRoomInfoData, user::LiveUserInfo},
@@ -28,7 +29,9 @@ pub enum DownloaderEvent {
         file_path: String,
     },
     Progress {
-        speed: f32,
+        bytes_downloaded: u64,
+        download_speed_kbps: f32,
+        duration_ms: u64,
     },
     Reconnecting,
     Completed {
@@ -37,7 +40,7 @@ pub enum DownloaderEvent {
         duration: u64,
     },
     Error {
-        cause: String,
+        error: DownloaderError,
     },
 }
 
@@ -88,7 +91,7 @@ pub struct DownloaderContext {
     pub strategy: Strategy,
     stats: Arc<TryLock<DownloadStats>>,
     is_running: Arc<atomic::AtomicBool>,
-    event_queue: Arc<TryLock<VecDeque<DownloadEvent>>>,
+    event_queue: Arc<TryLock<VecDeque<DownloaderEvent>>>,
 }
 
 impl DownloaderContext {
@@ -136,7 +139,7 @@ impl DownloaderContext {
     }
 
     /// 推送事件到队列
-    pub fn push_event(&self, event: DownloadEvent) {
+    pub fn push_event(&self, event: DownloaderEvent) {
         if let Some(mut queue) = self.event_queue.try_lock() {
             queue.push_back(event);
         }
@@ -157,17 +160,13 @@ impl DownloaderContext {
     }
 
     /// 处理单个事件
-    fn handle_event(&self, cx: &mut AsyncApp, event: DownloadEvent) {
+    fn handle_event(&self, cx: &mut AsyncApp, event: DownloaderEvent) {
         // 记录日志
         self.log_event(&event);
 
-        if !self.is_running() {
-            return;
-        }
-
         // 事件现在通过全局状态管理，这里只处理内部状态
         match &event {
-            DownloadEvent::Started { file_path } => {
+            DownloaderEvent::Started { file_path } => {
                 // 确保运行状态为true
                 self.set_running(true);
 
@@ -186,9 +185,10 @@ impl DownloaderContext {
                     });
                 });
             }
-            DownloadEvent::Progress {
+            DownloaderEvent::Progress {
                 download_speed_kbps,
-                ..
+                duration_ms,
+                bytes_downloaded,
             } => {
                 // 更新统计信息
                 self.update_stats(|stats| {
@@ -198,13 +198,15 @@ impl DownloaderContext {
                 self.emit_downloader_event(
                     cx,
                     DownloaderEvent::Progress {
-                        speed: *download_speed_kbps,
+                        download_speed_kbps: *download_speed_kbps,
+                        duration_ms: *duration_ms,
+                        bytes_downloaded: *bytes_downloaded,
                     },
                 );
             }
-            DownloadEvent::Error { error } => {
+            DownloaderEvent::Error { error } => {
                 if error.is_recoverable() {
-                    self.push_event(DownloadEvent::Reconnecting);
+                    self.push_event(DownloaderEvent::Reconnecting);
                 }
 
                 // 更新全局状态
@@ -214,14 +216,14 @@ impl DownloaderContext {
                     });
                 });
             }
-            DownloadEvent::Reconnecting => {
+            DownloaderEvent::Reconnecting => {
                 self.emit_downloader_event(cx, DownloaderEvent::Reconnecting);
 
                 self.update_global_state(cx, |state, _| {
                     state.reconnecting = true;
                 });
             }
-            DownloadEvent::Completed {
+            DownloaderEvent::Completed {
                 file_size,
                 file_path,
                 duration,
@@ -257,16 +259,16 @@ impl DownloaderContext {
     }
 
     /// 记录事件日志
-    fn log_event(&self, event: &DownloadEvent) {
+    fn log_event(&self, event: &DownloaderEvent) {
         match event {
-            DownloadEvent::Started { file_path } => {
+            DownloaderEvent::Started { file_path } => {
                 log_recording_start(
                     self.room_info.room_id,
                     &self.quality.to_string(),
                     &format!("文件: {file_path}"),
                 );
             }
-            DownloadEvent::Progress {
+            DownloaderEvent::Progress {
                 bytes_downloaded,
                 download_speed_kbps,
                 duration_ms,
@@ -281,7 +283,7 @@ impl DownloaderContext {
                     duration_ms / 1000
                 );
             }
-            DownloadEvent::Error { error } => {
+            DownloaderEvent::Error { error } => {
                 if error.is_recoverable() {
                     log_recording_error(
                         self.room_info.room_id,
@@ -291,10 +293,10 @@ impl DownloaderContext {
                     log_recording_error(self.room_info.room_id, &format!("录制失败: {error}"));
                 }
             }
-            DownloadEvent::Reconnecting => {
+            DownloaderEvent::Reconnecting => {
                 log_recording_error(self.room_info.room_id, "网络中断，正在重连");
             }
-            DownloadEvent::Completed {
+            DownloaderEvent::Completed {
                 file_path,
                 file_size,
                 duration,
@@ -317,7 +319,7 @@ impl DownloaderContext {
         let context = self.clone();
 
         cx.spawn(async move |cx| {
-            while context.is_running() {
+            loop {
                 // 每 1s 处理一次事件队列
                 cx.background_executor().timer(Duration::from_secs(1)).await;
 

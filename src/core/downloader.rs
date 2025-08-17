@@ -29,33 +29,16 @@ use std::sync::Mutex;
 pub const REFERER: &str = "https://live.bilibili.com/";
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-#[derive(Debug, Clone)]
-pub enum DownloadEvent {
-    Started {
-        file_path: String,
-    },
-    Progress {
-        bytes_downloaded: u64,
-        download_speed_kbps: f32,
-        duration_ms: u64,
-    },
-    Completed {
-        file_path: String,
-        file_size: u64,
-        duration: u64,
-    },
-    Error {
-        error: DownloaderError,
-    },
-    Reconnecting,
-}
-
 pub trait Downloader {
     /// 开始下载
     fn start(&mut self, cx: &mut AsyncApp) -> Result<()>;
 
     /// 停止下载
     fn stop(&mut self) -> impl std::future::Future<Output = Result<()>> + Send;
+
+    fn is_running(&self) -> bool;
+
+    fn set_running(&self, running: bool);
 }
 
 #[derive(Debug)]

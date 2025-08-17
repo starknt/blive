@@ -1,6 +1,6 @@
+use crate::core::downloader::context::DownloaderEvent;
 use crate::core::downloader::{
-    DownloadConfig, DownloadEvent, Downloader, DownloaderContext, DownloaderError, REFERER,
-    USER_AGENT,
+    DownloadConfig, Downloader, DownloaderContext, DownloaderError, REFERER, USER_AGENT,
 };
 use crate::settings::{Strategy, StreamCodec};
 use anyhow::{Context, Result};
@@ -12,12 +12,15 @@ use futures::channel::oneshot;
 use gpui::AsyncApp;
 use gpui::http_client::{AsyncBody, Method, Request};
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 #[derive(Debug)]
 pub struct HttpStreamDownloader {
     url: String,
     config: DownloadConfig,
+    running: Arc<AtomicBool>,
     context: DownloaderContext,
     stop_rx: Option<oneshot::Receiver<()>>,
 }
@@ -27,6 +30,7 @@ impl HttpStreamDownloader {
         Self {
             url,
             config,
+            running: Arc::new(AtomicBool::new(false)),
             context,
             stop_rx: None,
         }
@@ -62,21 +66,32 @@ impl HttpStreamDownloader {
 }
 
 impl Downloader for HttpStreamDownloader {
+    fn is_running(&self) -> bool {
+        self.running.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn set_running(&self, running: bool) {
+        self.running
+            .store(running, std::sync::atomic::Ordering::Relaxed);
+    }
+
     fn start(&mut self, cx: &mut AsyncApp) -> Result<()> {
         let url = self.url.clone();
 
         // 更新状态
         self.context.set_running(true);
+        self.set_running(true);
 
         let config = self.config.clone();
         let output_path = config.output_path.clone();
 
         // 发送开始事件
-        self.context.push_event(DownloadEvent::Started {
+        self.context.push_event(DownloaderEvent::Started {
             file_path: output_path.clone(),
         });
 
         let context = self.context.clone();
+        let is_running = self.running.clone();
         let start_time = Instant::now();
         let mut bytes_downloaded = 0;
         let (stop_tx, stop_rx) = oneshot::channel();
@@ -97,7 +112,7 @@ impl Downloader for HttpStreamDownloader {
                         match context.client.send(request).await {
                             Ok(mut response) => {
                                 if !response.status().is_success() {
-                                    return context.push_event(DownloadEvent::Error {
+                                    return context.push_event(DownloaderEvent::Error {
                                         error: DownloaderError::NetworkConnectionFailed {
                                             message: format!("HTTP请求失败: {}", response.status()),
                                         },
@@ -114,24 +129,14 @@ impl Downloader for HttpStreamDownloader {
                                 match std::fs::File::create(&config.output_path) {
                                     Ok(mut file) => {
                                         while let Ok(bytes_read) = body.read(&mut buffer).await {
-                                            if !context.is_running() {
-                                                context.push_event(DownloadEvent::Completed {
+                                            if bytes_read == 0 {
+                                                context.push_event(DownloaderEvent::Completed {
                                                     file_path: output_path.clone(),
                                                     file_size: bytes_downloaded,
                                                     duration: start_time.elapsed().as_secs_f64()
                                                         as u64,
                                                 });
                                                 let _ = stop_tx.send(());
-                                                return;
-                                            }
-
-                                            if bytes_read == 0 {
-                                                context.push_event(DownloadEvent::Completed {
-                                                    file_path: config.output_path,
-                                                    file_size: bytes_downloaded,
-                                                    duration: start_time.elapsed().as_secs_f64()
-                                                        as u64,
-                                                });
                                                 break; // EOF
                                             }
 
@@ -157,14 +162,14 @@ impl Downloader for HttpStreamDownloader {
                                                         last_report_bytes = bytes_downloaded;
                                                     }
 
-                                                    context.push_event(DownloadEvent::Progress {
+                                                    context.push_event(DownloaderEvent::Progress {
                                                         bytes_downloaded,
                                                         download_speed_kbps,
                                                         duration_ms,
                                                     });
                                                 }
                                                 Err(e) => {
-                                                    context.push_event(DownloadEvent::Error {
+                                                    context.push_event(DownloaderEvent::Error {
                                                         error: DownloaderError::FileWriteFailed {
                                                             path: config.output_path.clone(),
                                                             reason: e.to_string(),
@@ -172,10 +177,23 @@ impl Downloader for HttpStreamDownloader {
                                                     });
                                                 }
                                             }
+
+                                            if !is_running
+                                                .load(std::sync::atomic::Ordering::Relaxed)
+                                            {
+                                                context.push_event(DownloaderEvent::Completed {
+                                                    file_path: output_path.clone(),
+                                                    file_size: bytes_downloaded,
+                                                    duration: start_time.elapsed().as_secs_f64()
+                                                        as u64,
+                                                });
+                                                let _ = stop_tx.send(());
+                                                break;
+                                            }
                                         }
                                     }
                                     Err(e) => {
-                                        context.push_event(DownloadEvent::Error {
+                                        context.push_event(DownloaderEvent::Error {
                                             error: DownloaderError::FileCreationFailed {
                                                 path: config.output_path,
                                                 reason: e.to_string(),
@@ -185,7 +203,7 @@ impl Downloader for HttpStreamDownloader {
                                 }
                             }
                             Err(e) => {
-                                context.push_event(DownloadEvent::Error {
+                                context.push_event(DownloaderEvent::Error {
                                     error: DownloaderError::NetworkConnectionFailed {
                                         message: format!("HTTP请求失败: {e}"),
                                     },
@@ -201,7 +219,7 @@ impl Downloader for HttpStreamDownloader {
                         let mut process = match Self::download_stream(&url, &config) {
                             Ok(p) => p,
                             Err(e) => {
-                                context.push_event(DownloadEvent::Error {
+                                context.push_event(DownloaderEvent::Error {
                                     error: DownloaderError::StartupFailed {
                                         command: format!("ffmpeg -i {url}"),
                                         stderr: e.to_string(),
@@ -214,14 +232,14 @@ impl Downloader for HttpStreamDownloader {
                         if let Ok(iter) = process.iter() {
                             for event in iter {
                                 // 检查是否收到停止信号
-                                if !context.is_running() {
+                                if !is_running.load(std::sync::atomic::Ordering::Relaxed) {
                                     process.quit().unwrap();
                                     if let Err(e) = process.wait() {
                                         eprintln!("FFmpeg进程wait失败: {e}");
                                     } else {
                                         println!("FFmpeg进程已成功清理");
                                     }
-                                    context.push_event(DownloadEvent::Completed {
+                                    context.push_event(DownloaderEvent::Completed {
                                         file_path: output_path.clone(),
                                         file_size: bytes_downloaded,
                                         duration: start_time.elapsed().as_secs_f64() as u64,
@@ -235,21 +253,21 @@ impl Downloader for HttpStreamDownloader {
                                         bytes_downloaded = progress.size_kb as u64 * 1024; // 转换为字节
                                         let duration_ms = start_time.elapsed().as_millis() as u64;
 
-                                        context.push_event(DownloadEvent::Progress {
+                                        context.push_event(DownloaderEvent::Progress {
                                             bytes_downloaded,
                                             download_speed_kbps: progress.bitrate_kbps,
                                             duration_ms,
                                         });
                                     }
                                     FfmpegEvent::Done => {
-                                        context.push_event(DownloadEvent::Completed {
+                                        context.push_event(DownloaderEvent::Completed {
                                             file_path: output_path.clone(),
                                             file_size: bytes_downloaded,
                                             duration: start_time.elapsed().as_secs_f64() as u64,
                                         });
                                     }
                                     FfmpegEvent::LogEOF => {
-                                        context.push_event(DownloadEvent::Completed {
+                                        context.push_event(DownloaderEvent::Completed {
                                             file_path: output_path.clone(),
                                             file_size: bytes_downloaded,
                                             duration: start_time.elapsed().as_secs_f64() as u64,
@@ -258,7 +276,7 @@ impl Downloader for HttpStreamDownloader {
                                     FfmpegEvent::Log(level, msg) => {
                                         match level {
                                             ffmpeg_sidecar::event::LogLevel::Fatal => {
-                                                context.push_event(DownloadEvent::Error {
+                                                context.push_event(DownloaderEvent::Error {
                                                     error: DownloaderError::FfmpegFatalError {
                                                         message: msg,
                                                     },
@@ -271,7 +289,7 @@ impl Downloader for HttpStreamDownloader {
                                                     || msg.contains("No route to host")
                                                     || msg.contains("Connection refused")
                                                 {
-                                                    context.push_event(DownloadEvent::Error {
+                                                    context.push_event(DownloaderEvent::Error {
                                                         error: DownloaderError::NetworkConnectionFailed {
                                                             message: msg,
                                                         },
@@ -280,7 +298,7 @@ impl Downloader for HttpStreamDownloader {
                                                     || msg.contains("Invalid data found")
                                                     || msg.contains("Decoder failed")
                                                 {
-                                                    context.push_event(DownloadEvent::Error {
+                                                    context.push_event(DownloaderEvent::Error {
                                                         error:
                                                             DownloaderError::NoSuitableStreamProtocol,
                                                     });
@@ -302,15 +320,17 @@ impl Downloader for HttpStreamDownloader {
     }
 
     async fn stop(&mut self) -> Result<()> {
-        self.context.set_running(false);
+        self.set_running(false);
 
         if let Some(stop_rx) = self.stop_rx.take() {
             match stop_rx.await {
                 Ok(_) => {
                     println!("成功触发停止信号");
+                    self.context.set_running(false);
                 }
                 Err(e) => {
                     eprintln!("停止信号发送失败: {e}");
+                    self.context.set_running(false);
                 }
             }
         }

@@ -213,6 +213,8 @@ impl BLiveApp {
                                                                         .detach();
                                                                     }
                                                                 }
+
+                                                                room_state.reconnecting = false;
                                                             }
                                                             LiveStatus::Offline | LiveStatus::Carousel => {
                                                                 if room_state.downloader.is_some() {
@@ -228,6 +230,24 @@ impl BLiveApp {
                                                                         room_state.downloader = None;
                                                                     }
                                                                 }
+                                                            }
+                                                        }
+
+                                                        if room_state.reconnecting {
+                                                            if room_state.reconnect_manager.should_reconnect() {
+                                                                let delay = room_state.reconnect_manager.calculate_delay();
+                                                                let record_dir = room_settings.record_dir.clone().unwrap_or_default();
+
+                                                                if let Some(downloader) = room_state.downloader.clone() {
+                                                                    cx.spawn(async move |cx| {
+                                                                        cx.background_executor().timer(delay).await;
+                                                                        let _ = downloader.restart(cx, &record_dir).await;
+                                                                    })
+                                                                    .detach();
+                                                                }
+
+                                                                room_state.reconnect_manager.increment_attempt();
+                                                                room_state.reconnecting = false;
                                                             }
                                                         }
 
@@ -278,34 +298,6 @@ impl BLiveApp {
                                         break;
                                     }
                                 }
-
-                                let _ = cx.update_global(|state: &mut AppState, cx| {
-                                    let global_settings = state.settings.clone();
-                                    let room_settings = state.get_room_settings(room_id).cloned();
-
-                                    if let (Some(room_state), Some(mut room_settings)) =
-                                        (state.get_room_state_mut(room_id), room_settings)
-                                    {
-                                        let room_settings = room_settings.merge_global(&global_settings);
-                                        if room_state.reconnecting {
-                                            if room_state.reconnect_manager.should_reconnect() {
-                                                let delay = room_state.reconnect_manager.calculate_delay();
-                                                let record_dir = room_settings.record_dir.clone().unwrap_or_default();
-
-                                                if let Some(downloader) = room_state.downloader.clone() {
-                                                    cx.spawn(async move |cx| {
-                                                        cx.background_executor().timer(delay).await;
-                                                        let _ = downloader.restart(cx, &record_dir).await;
-                                                    })
-                                                    .detach();
-                                                }
-
-                                                room_state.reconnect_manager.increment_attempt();
-                                                room_state.reconnecting = false;
-                                            }
-                                        }
-                                    }
-                                });
                             }
                         })
                         .detach();

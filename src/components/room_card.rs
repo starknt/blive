@@ -20,6 +20,7 @@ use gpui_component::{
     ActiveTheme as _, ColorName, ContextModal, Disableable, Icon, IconName, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
+    notification::Notification,
     skeleton::Skeleton,
     tag::Tag,
     v_flex,
@@ -66,6 +67,7 @@ pub struct RoomCard {
     area_tag_color: ColorName,
     live_time_tag_color: ColorName,
     live_attention_tag_color: ColorName,
+    downloader_speed_tag_color: ColorName,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -84,6 +86,7 @@ impl RoomCard {
         let area_tag_color = tag_colors.choose(&mut rand::rng()).unwrap();
         let live_time_tag_color = tag_colors.choose(&mut rand::rng()).unwrap();
         let live_attention_tag_color = tag_colors.choose(&mut rand::rng()).unwrap();
+        let downloader_speed_tag_color = tag_colors.choose(&mut rand::rng()).unwrap();
 
         Self {
             settings,
@@ -93,6 +96,7 @@ impl RoomCard {
             area_tag_color: *area_tag_color,
             live_time_tag_color: *live_time_tag_color,
             live_attention_tag_color: *live_attention_tag_color,
+            downloader_speed_tag_color: *downloader_speed_tag_color,
             _subscriptions: subscriptions,
         }
     }
@@ -159,6 +163,8 @@ impl RoomCard {
                                 }
                             }
                         });
+
+                        window.push_notification(Notification::success("房间设置保存成功"), cx);
                     }
                     RoomSettingsModalEvent::QuitSettings => {
                         window.close_modal(cx);
@@ -333,7 +339,7 @@ impl EventEmitter<RoomCardEvent> for RoomCard {}
 impl EventEmitter<DownloaderEvent> for RoomCard {}
 
 impl Render for RoomCard {
-    fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let room_state = self.get_room_state(cx).unwrap_or_default().clone();
 
         let room_info = &room_state.room_info;
@@ -460,126 +466,206 @@ impl Render for RoomCard {
             .when(room_state.reconnecting, |div| {
                 div.border_color(cx.theme().warning)
             })
+            .when(
+                matches!(
+                    room_state.downloader_status,
+                    Some(DownloaderStatus::Started { .. })
+                ),
+                |div| div.border_color(cx.theme().primary),
+            )
+            .when(
+                matches!(
+                    room_state.downloader_status,
+                    Some(DownloaderStatus::Completed { .. })
+                ),
+                |div| div.border_color(cx.theme().success),
+            )
             .child(
                 v_flex()
                     .gap_4()
                     .child(
-                        // 房间头部信息
                         h_flex()
+                            .px_2()
                             .justify_between()
                             .items_start()
                             .child(
-                                h_flex()
-                                    .gap_3()
-                                    .items_start()
+                                v_flex()
+                                .flex_1()
+                                    .gap_y_4()
                                     .child(
-                                        div().w_40().child(
-                                            div()
-                                                .rounded(cx.theme().radius_lg)
-                                                .overflow_hidden()
-                                                .size_full()
+                                        h_flex()
+                                        .gap_x_4()
+                                        .child(
+                                            div().w_40().child(
+                                                div()
+                                                    .rounded(cx.theme().radius_lg)
+                                                    .overflow_hidden()
+                                                    .size_full()
+                                                    .child(
+                                                        img(room_info.user_cover.clone())
+                                                            .block()
+                                                            .size_full()
+                                                            .rounded(cx.theme().radius_lg)
+                                                            .overflow_hidden()
+                                                            .object_fit(ObjectFit::Cover),
+                                                    ),
+                                            ),
+                                        )
+                                        .child(
+                                            v_flex()
+                                                .gap_1()
                                                 .child(
-                                                    img(room_info.user_cover.clone())
-                                                        .block()
-                                                        .size_full()
-                                                        .rounded(cx.theme().radius_lg)
-                                                        .overflow_hidden()
-                                                        .object_fit(ObjectFit::Cover),
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .child(room_info.title.clone().into_element())
+                                                        .child(div().font_bold().child(
+                                                            user_info.uname.clone().into_element(),
+                                                        )),
+                                                )
+                                                .child(
+                                                    format!(
+                                                        "房间号: {}",
+                                                        if room_info.short_id > 0 {
+                                                            room_info.short_id
+                                                        } else {
+                                                            room_info.room_id
+                                                        }
+                                                    )
+                                                    .into_element(),
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .items_center()
+                                                        .child(div().w_2().h_2().rounded_full().bg(
+                                                            match room_info.live_status {
+                                                                LiveStatus::Live => gpui::rgb(0xef4444),
+                                                                _ => gpui::rgb(0x6b7280),
+                                                            },
+                                                        ))
+                                                        .child(match room_info.live_status {
+                                                            LiveStatus::Live => "直播中".into_element(),
+                                                            LiveStatus::Carousel => {
+                                                                "轮播中".into_element()
+                                                            }
+                                                            LiveStatus::Offline => {
+                                                                "未开播".into_element()
+                                                            }
+                                                        })
+                                                        .when(
+                                                            matches!(
+                                                                room_state.status,
+                                                                RoomCardStatus::LiveRecording
+                                                            ),
+                                                            |div| {
+                                                                div.child(
+                                                                    Tag::color(
+                                                                        self.live_attention_tag_color,
+                                                                    )
+                                                                    .child(format!(
+                                                                        "🔥 {}",
+                                                                        room_info.attention
+                                                                    )),
+                                                                )
+                                                            },
+                                                        )
+                                                        .when(
+                                                            matches!(
+                                                                room_info.live_status,
+                                                                LiveStatus::Live
+                                                            ),
+                                                            |div| {
+                                                                div.child(
+                                                                    Tag::color(self.area_tag_color)
+                                                                        .child(room_info.area_name),
+                                                                )
+                                                            },
+                                                        )
+                                                        .when(
+                                                            matches!(
+                                                                room_info.live_status,
+                                                                LiveStatus::Live
+                                                            ),
+                                                            |div| {
+                                                                div.child(
+                                                                    Tag::color(
+                                                                        self.live_time_tag_color,
+                                                                    )
+                                                                    .child(live_time.to_owned()),
+                                                                )
+                                                            },
+                                                        ),
                                                 ),
                                         ),
                                     )
                                     .child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(room_info.title.clone().into_element())
-                                                    .child(div().font_bold().child(
-                                                        user_info.uname.clone().into_element(),
-                                                    )),
-                                            )
-                                            .child(
-                                                format!(
-                                                    "房间号: {}",
-                                                    if room_info.short_id > 0 {
-                                                        room_info.short_id
-                                                    } else {
-                                                        room_info.room_id
+                                        h_flex()
+                                        .flex_1()
+                                            .gap_x_2()
+                                            .items_center()
+                                            .when_some(room_state.downloader_status.clone(), |div, status| {
+                                                div.text_ellipsis().line_clamp(1).text_xs().font_bold().children({
+                                                    match status {
+                                                        DownloaderStatus::Started { ref file_path } => {
+                                                            vec![
+                                                                Tag::color(self.downloader_speed_tag_color).child(
+                                                                    Path::new(file_path)
+                                                                        .file_name()
+                                                                        .unwrap_or_default()
+                                                                        .to_string_lossy()
+                                                                        .to_string()
+                                                                )
+                                                            ]
+                                                        }
+                                                        DownloaderStatus::Completed {
+                                                            ref file_path,
+                                                            ref file_size,
+                                                            ref duration,
+                                                        } => vec![
+                                                            Tag::color(self.downloader_speed_tag_color).child(format!(
+                                                                "录制完成: {}",
+                                                                file_path,
+                                                            )),
+                                                            Tag::color(self.downloader_speed_tag_color).child(format!(
+                                                                "大小: {}",
+                                                                pretty_bytes(*file_size),
+                                                            )),
+                                                            Tag::color(self.downloader_speed_tag_color).child(format!(
+                                                                "时长: {}",
+                                                                pretty_duration(*duration),
+                                                            )),
+                                                        ],
+                                                        DownloaderStatus::Error { ref cause } => {
+                                                            vec![
+                                                                #[cfg(debug_assertions)]
+                                                                Tag::color(self.downloader_speed_tag_color).child(format!("录制失败: {}", cause))
+                                                            ]
+                                                        }
                                                     }
+                                                })
+                                            })
+                                            .when_some(self.downloader_speed, |div, speed| {
+                                                div.child(
+                                                    Tag::color(self.downloader_speed_tag_color)
+                                                    .child(
+                                                        h_flex()
+                                                        .gap_2()
+                                                        .child(
+                                                            Icon::default()
+                                                                .path("icons/gauge.svg")
+                                                                .into_element()
+                                                        )
+                                                        .child(format!("{speed:.2} KB/s"))
+                                                    )
                                                 )
-                                                .into_element(),
-                                            )
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .items_center()
-                                                    .child(div().w_2().h_2().rounded_full().bg(
-                                                        match room_info.live_status {
-                                                            LiveStatus::Live => gpui::rgb(0xef4444),
-                                                            _ => gpui::rgb(0x6b7280),
-                                                        },
-                                                    ))
-                                                    .child(match room_info.live_status {
-                                                        LiveStatus::Live => "直播中".into_element(),
-                                                        LiveStatus::Carousel => {
-                                                            "轮播中".into_element()
-                                                        }
-                                                        LiveStatus::Offline => {
-                                                            "未开播".into_element()
-                                                        }
-                                                    })
-                                                    .when(
-                                                        matches!(
-                                                            room_state.status,
-                                                            RoomCardStatus::LiveRecording
-                                                        ),
-                                                        |div| {
-                                                            div.child(
-                                                                Tag::color(
-                                                                    self.live_attention_tag_color,
-                                                                )
-                                                                .child(format!(
-                                                                    "🔥 {}",
-                                                                    room_info.attention
-                                                                )),
-                                                            )
-                                                        },
-                                                    )
-                                                    .when(
-                                                        matches!(
-                                                            room_info.live_status,
-                                                            LiveStatus::Live
-                                                        ),
-                                                        |div| {
-                                                            div.child(
-                                                                Tag::color(self.area_tag_color)
-                                                                    .child(room_info.area_name),
-                                                            )
-                                                        },
-                                                    )
-                                                    .when(
-                                                        matches!(
-                                                            room_info.live_status,
-                                                            LiveStatus::Live
-                                                        ),
-                                                        |div| {
-                                                            div.child(
-                                                                Tag::color(
-                                                                    self.live_time_tag_color,
-                                                                )
-                                                                .child(live_time.to_owned()),
-                                                            )
-                                                        },
-                                                    ),
-                                            ),
-                                    ),
+                                            })
+                                    )
                             )
                             .child(
                                 h_flex()
                                     .px_4()
                                     .flex_wrap()
-                                    .max_w_2_5()
+                                    .max_w_1_4()
                                     .gap_2()
                                     .child(
                                         Button::new("record")
@@ -667,44 +753,6 @@ impl Render for RoomCard {
                                     ),
                             ),
                     )
-                    .child(
-                        h_flex()
-                            .gap_x_4()
-                            .items_center()
-                            .when_some(room_state.downloader_status.clone(), |div, status| {
-                                match status {
-                                    DownloaderStatus::Started { ref file_path } => div.child(
-                                        format!(
-                                            "录制中: {}",
-                                            Path::new(file_path)
-                                                .file_name()
-                                                .unwrap_or_default()
-                                                .to_string_lossy()
-                                        )
-                                        .into_element(),
-                                    ),
-                                    DownloaderStatus::Completed {
-                                        ref file_path,
-                                        ref file_size,
-                                        ref duration,
-                                    } => div.child(
-                                        format!(
-                                            "录制完成: {} 大小: {} 时长: {}",
-                                            file_path,
-                                            pretty_bytes(*file_size),
-                                            pretty_duration(*duration)
-                                        )
-                                        .into_element(),
-                                    ),
-                                    DownloaderStatus::Error { ref cause } => {
-                                        div.child(format!("录制失败: {}", cause).into_element())
-                                    }
-                                }
-                            })
-                            .when_some(self.downloader_speed, |div, speed| {
-                                div.child(format!("{speed:.2} Kb/s").into_element())
-                            }),
-                    ),
             )
     }
 }

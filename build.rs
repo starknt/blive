@@ -19,6 +19,11 @@ fn download_ffmpeg() -> Result<(), Box<dyn std::error::Error>> {
     let download_url = ffmpeg_download_url()?;
     let destination = resolve_relative_path("resources/sidecar".into());
 
+    // clean the destination directory
+    if destination.exists() {
+        std::fs::remove_dir_all(&destination)?;
+    }
+
     // ensure the destination directory exists
     std::fs::create_dir_all(&destination)?;
 
@@ -27,14 +32,12 @@ fn download_ffmpeg() -> Result<(), Box<dyn std::error::Error>> {
     // updates, you could replace this with your own download function.
     println!("Downloading from: {download_url:?}");
     let archive_path = download_ffmpeg_package(download_url, &destination)?;
-    println!("Downloaded package: {archive_path:?}");
 
     // Extraction uses `tar` on all platforms (available in Windows since version 1803)
-    println!("Extracting...");
-    if unpack_ffmpeg(&archive_path, &destination).is_ok() {
-        println!("Extracted successfully");
-    } else {
-        println!("Extraction failed");
+    println!("Extracting... {archive_path:?} -> {destination:?}");
+    match unpack_ffmpeg(&archive_path, &destination) {
+        Ok(_) => println!("Extracted successfully"),
+        Err(e) => eprintln!("Extraction failed: {e:?}"),
     }
 
     // Use the freshly installed FFmpeg to check the version number

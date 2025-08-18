@@ -42,7 +42,7 @@ winresource = "0.1"
 [features]
 default = ["lite", "ffmpeg"]
 lite = []
-ffmpeg = ["ffmpeg-sidecar"]
+ffmpeg = ["dep:ffmpeg-sidecar"]
 
 [package.metadata.bundle]
 name = "BLive"
@@ -61,7 +61,6 @@ ffmpeg-sidecar = { version = "2" }
 tokio = { version = "1", features = ["full"] }
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 strip = true
 lto = true
-codegen-units = 1

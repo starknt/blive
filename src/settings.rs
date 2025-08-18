@@ -287,6 +287,8 @@ pub struct GlobalSettings {
     /// 录制目录
     pub record_dir: String,
     /// 录制房间
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub rooms: Vec<RoomSettings>,
 }
 
@@ -412,14 +414,19 @@ pub struct RoomSettings {
     /// 房间号
     pub room_id: u64,
     /// 录制目录
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub record_dir: Option<String>,
     /// 策略
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub strategy: Option<Strategy>,
     /// 录制质量
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub quality: Option<Quality>,
     /// 录制格式
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub format: Option<VideoContainer>,
     /// 录制编码
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub codec: Option<StreamCodec>,
     /// 录制名称 {up_name}_{room_title}_{datetime}
     pub record_name: String,

@@ -12,6 +12,7 @@ pub struct SystemTray {
 #[cfg(not(windows))]
 const ICON: &[u8] = include_bytes!("../resources/mac/icon.png");
 
+#[cfg(not(windows))]
 fn load_icon_rgba(icon: &[u8]) -> IconSource {
     IconSource::Data {
         width: 0,

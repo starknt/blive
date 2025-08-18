@@ -1,9 +1,11 @@
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_sidecar::{
     download::{check_latest_version, download_ffmpeg_package, ffmpeg_download_url, unpack_ffmpeg},
     version::ffmpeg_version_with_path,
 };
 use std::process::Command;
 
+#[cfg(feature = "ffmpeg")]
 fn download_ffmpeg() -> Result<(), Box<dyn std::error::Error>> {
     // Checking the version number before downloading is actually not necessary,
     // but it's a good way to check that the download URL is correct.
@@ -29,7 +31,11 @@ fn download_ffmpeg() -> Result<(), Box<dyn std::error::Error>> {
 
     // Extraction uses `tar` on all platforms (available in Windows since version 1803)
     println!("Extracting...");
-    unpack_ffmpeg(&archive_path, &destination)?;
+    if unpack_ffmpeg(&archive_path, &destination).is_ok() {
+        println!("Extracted successfully");
+    } else {
+        println!("Extraction failed");
+    }
 
     // Use the freshly installed FFmpeg to check the version number
     let version = ffmpeg_version_with_path(destination.join("ffmpeg"))?;
@@ -37,6 +43,28 @@ fn download_ffmpeg() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Done! 🏁");
 
+    Ok(())
+}
+
+#[cfg(not(feature = "ffmpeg"))]
+fn download_ffmpeg() -> Result<(), Box<dyn std::error::Error>> {
+    // 在未启用 ffmpeg feature 时，不下载 sidecar，仅确保资源目录存在，避免 cargo-bundle 报错
+    let destination = resolve_relative_path("resources/sidecar".into());
+    let ffmpeg_dir = destination.join("ffmpeg");
+    if ffmpeg_dir.exists() {
+        if ffmpeg_dir.is_file() {
+            // 如果存在同名文件，移除后创建目录
+            std::fs::remove_file(&ffmpeg_dir)?;
+            std::fs::create_dir_all(&ffmpeg_dir)?;
+        }
+        // 目录已存在则跳过
+    } else {
+        std::fs::create_dir_all(&ffmpeg_dir)?;
+    }
+    println!(
+        "Skipping FFmpeg sidecar download (feature 'ffmpeg' not enabled). Created {:?}",
+        ffmpeg_dir
+    );
     Ok(())
 }
 
@@ -111,6 +139,7 @@ fn main() {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
 
+        let lite = if cfg!(feature = "lite") { "1" } else { "0" };
         let env_iss = "resources/windows/env.iss";
         let env_iss = std::path::Path::new(env_iss);
         println!("cargo:rerun-if-changed={}", env_iss.display());
@@ -125,6 +154,7 @@ fn main() {
                 r#"
 #define MyAppName "BLive"
 #define MyAppVersion "{pkg_version}"
+#define LITE {lite}
 "#
             ),
         )

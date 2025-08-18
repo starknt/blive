@@ -29,39 +29,15 @@ jobs:
       - name: install nextest
         uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
-      - if: ${{ matrix.os == 'ubuntu-latest' }}
-        name: Install xcb
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libxcb-xinerama0-dev \
-            libxcb-icccm4-dev \
-            libxcb-image0-dev \
-            libxcb-keysyms1-dev \
-            libxcb-render-util0-dev \
-            libxcb-shape0-dev \
-            libxcb-sync-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libx11-xcb-dev \
-            mold \
-            pkg-config
-      # - name: Check code format
-      #   run: cargo fmt --all -- --check
-      # - name: Check the package for errors
-      #   run: cargo check --all
-      # - name: Lint rust sources
-      #   run: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
       - name: Execute tests
         run: cargo nextest run --all-features
       - name: Install cargo-bundle
         run: cargo install cargo-bundle
       - if: ${{ matrix.os != 'windows-latest' }}
         name: Build & Bundle
-        run: cargo bundle --release
+        run: cargo bundle --release --features lite --no-default-features
       - if: ${{ matrix.os == 'windows-latest' }}
-        run: cargo build --release
+        run: cargo build --release --features lite --no-default-features
       - if: ${{ matrix.os == 'windows-latest' }}
         name: Compile .ISS to .EXE Installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2

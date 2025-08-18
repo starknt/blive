@@ -18,7 +18,7 @@ use reqwest_client::ReqwestClient;
 actions!(menu, [Quit]);
 
 fn main() {
-    #[cfg(debug_assertions)]
+    #[cfg(any(feature = "ffmpeg", debug_assertions))]
     {
         use ffmpeg_sidecar::command::ffmpeg_is_installed;
 

@@ -20,11 +20,12 @@ use crate::settings::{
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use chrono_tz::Asia::Shanghai;
-pub use context::{DownloadConfig, DownloaderContext};
 use gpui::AsyncApp;
 use rand::Rng;
-pub use stats::DownloadStats;
 use std::sync::Mutex;
+
+pub use context::{DownloadConfig, DownloaderContext};
+pub use stats::DownloadStats;
 
 pub const REFERER: &str = "https://live.bilibili.com/";
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -152,22 +153,17 @@ impl BLiveDownloader {
     }
 
     pub async fn stop(&self) {
-        // 设置停止状态
-        self.context.set_running(false);
-
-        {
-            let mut downloader_guard = self.downloader.lock().unwrap();
-            if let Some(ref mut downloader) = downloader_guard.as_mut() {
-                match downloader {
-                    DownloaderType::HttpStream(downloader) => {
-                        if let Some(downloader) = downloader {
-                            let _ = downloader.stop().await;
-                        }
+        let mut downloader_guard = self.downloader.lock().unwrap();
+        if let Some(ref mut downloader) = downloader_guard.as_mut() {
+            match downloader {
+                DownloaderType::HttpStream(downloader) => {
+                    if let Some(downloader) = downloader {
+                        let _ = downloader.stop().await;
                     }
-                    DownloaderType::HttpHls(downloader) => {
-                        if let Some(downloader) = downloader {
-                            let _ = downloader.stop().await;
-                        }
+                }
+                DownloaderType::HttpHls(downloader) => {
+                    if let Some(downloader) = downloader {
+                        let _ = downloader.stop().await;
                     }
                 }
             }

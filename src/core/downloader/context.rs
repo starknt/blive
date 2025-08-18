@@ -162,6 +162,7 @@ impl DownloaderContext {
     /// 处理单个事件
     fn handle_event(&self, cx: &mut AsyncApp, event: DownloaderEvent) {
         // 记录日志
+        #[cfg(debug_assertions)]
         self.log_event(&event);
 
         // 事件现在通过全局状态管理，这里只处理内部状态
@@ -259,6 +260,7 @@ impl DownloaderContext {
     }
 
     /// 记录事件日志
+    #[cfg(debug_assertions)]
     fn log_event(&self, event: &DownloaderEvent) {
         match event {
             DownloaderEvent::Started { file_path } => {
@@ -273,8 +275,6 @@ impl DownloaderContext {
                 download_speed_kbps,
                 duration_ms,
             } => {
-                // 只在调试模式下记录详细进度，避免日志过多
-                #[cfg(debug_assertions)]
                 tracing::debug!(
                     "录制进度 - 房间: {}, 已下载: {:.2}MB, 速度: {:.1}kb/s, 时长: {}",
                     self.room_info.room_id,

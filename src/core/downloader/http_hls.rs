@@ -4,9 +4,6 @@ use crate::core::downloader::{
 };
 use crate::settings::StreamCodec;
 use anyhow::Result;
-use ffmpeg_sidecar::child::FfmpegChild;
-use ffmpeg_sidecar::command::FfmpegCommand;
-use ffmpeg_sidecar::event::FfmpegEvent;
 use futures::channel::oneshot;
 use gpui::AsyncApp;
 use std::sync::Arc;
@@ -33,8 +30,12 @@ impl HttpHlsDownloader {
         }
     }
 
-    fn download_stream(url: &str, config: &DownloadConfig) -> Result<FfmpegChild> {
-        let mut cmd = FfmpegCommand::new();
+    #[cfg(feature = "ffmpeg")]
+    fn download_stream(
+        url: &str,
+        config: &DownloadConfig,
+    ) -> Result<ffmpeg_sidecar::child::FfmpegChild> {
+        let mut cmd = ffmpeg_sidecar::command::FfmpegCommand::new();
 
         if config.overwrite {
             cmd.overwrite();
@@ -92,6 +93,8 @@ impl Downloader for HttpHlsDownloader {
         let is_running = self.running.clone();
         let start_time = Instant::now();
         let mut bytes_downloaded = 0;
+
+        #[cfg(feature = "ffmpeg")]
         cx.background_executor()
             .spawn(async move {
                 let mut process = match Self::download_stream(&url, &config) {
@@ -128,7 +131,7 @@ impl Downloader for HttpHlsDownloader {
                             }
 
                             match event {
-                                FfmpegEvent::Progress(progress) => {
+                                ffmpeg_sidecar::event::FfmpegEvent::Progress(progress) => {
                                     bytes_downloaded += progress.size_kb as u64;
                                     context.push_event(DownloaderEvent::Progress {
                                         bytes_downloaded,
@@ -136,21 +139,21 @@ impl Downloader for HttpHlsDownloader {
                                         duration_ms: start_time.elapsed().as_millis() as u64,
                                     });
                                 }
-                                FfmpegEvent::Done => {
+                                ffmpeg_sidecar::event::FfmpegEvent::Done => {
                                     context.push_event(DownloaderEvent::Completed {
                                         file_path: output_path.clone(),
                                         file_size: bytes_downloaded,
                                         duration: start_time.elapsed().as_secs_f64() as u64,
                                     });
                                 }
-                                FfmpegEvent::LogEOF => {
+                                ffmpeg_sidecar::event::FfmpegEvent::LogEOF => {
                                     context.push_event(DownloaderEvent::Completed {
                                         file_path: output_path.clone(),
                                         file_size: bytes_downloaded,
                                         duration: start_time.elapsed().as_secs_f64() as u64,
                                     });
                                 }
-                                FfmpegEvent::Log(level, message) => {
+                                ffmpeg_sidecar::event::FfmpegEvent::Log(level, message) => {
                                     match level {
                                         ffmpeg_sidecar::event::LogLevel::Fatal => {
                                             context.push_event(DownloaderEvent::Error {

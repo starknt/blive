@@ -4,9 +4,6 @@ use crate::core::downloader::{
 };
 use crate::settings::{Strategy, StreamCodec};
 use anyhow::{Context, Result};
-use ffmpeg_sidecar::child::FfmpegChild;
-use ffmpeg_sidecar::command::FfmpegCommand;
-use ffmpeg_sidecar::event::FfmpegEvent;
 use futures::AsyncReadExt;
 use futures::channel::oneshot;
 use gpui::AsyncApp;
@@ -36,8 +33,12 @@ impl HttpStreamDownloader {
         }
     }
 
-    fn download_stream(url: &str, config: &DownloadConfig) -> Result<FfmpegChild> {
-        let mut cmd = FfmpegCommand::new();
+    #[cfg(feature = "ffmpeg")]
+    fn download_stream(
+        url: &str,
+        config: &DownloadConfig,
+    ) -> Result<ffmpeg_sidecar::child::FfmpegChild> {
+        let mut cmd = ffmpeg_sidecar::command::FfmpegCommand::new();
 
         if config.overwrite {
             cmd.overwrite();
@@ -214,8 +215,11 @@ impl Downloader for HttpStreamDownloader {
                     .detach();
             }
             Strategy::PriorityConfig => {
+                #[cfg(feature = "ffmpeg")]
                 cx.background_executor()
                     .spawn(async move {
+                        use ffmpeg_sidecar::event::FfmpegEvent;
+
                         let mut process = match Self::download_stream(&url, &config) {
                             Ok(p) => p,
                             Err(e) => {

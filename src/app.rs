@@ -129,163 +129,161 @@ impl BLiveApp {
                                 );
 
                                 match (room_data, user_data) {
-                                            (Ok(room_info), Ok(user_info)) => {
-                                                let _ = cx.update_global(|state: &mut AppState, cx| {
-                                                    let global_settings = state.settings.clone();
-                                                    let room_settings = state.get_room_settings(room_id).cloned();
+                                    (Ok(room_info), Ok(user_info)) => {
+                                        let _ = cx.update_global(|state: &mut AppState, cx| {
+                                            let global_settings = state.settings.clone();
+                                            let room_settings = state.get_room_settings(room_id).cloned();
 
-                                                    if let (Some(room_state), Some(mut room_settings)) =
-                                                        (state.get_room_state_mut(room_id), room_settings)
-                                                    {
-                                                        let room_settings = room_settings.merge_global(&global_settings);
+                                            if let (Some(room_state), Some(mut room_settings)) = (state.get_room_state_mut(room_id), room_settings)
+                                            {
+                                                let room_settings = room_settings.merge_global(&global_settings);
+                                                let live_status = room_info.live_status;
+                                                room_state.room_info = Some(room_info);
+                                                room_state.user_info = Some(user_info.info);
 
-                                                        let live_status = room_info.live_status;
-                                                        room_state.room_info = Some(room_info);
-                                                        room_state.user_info = Some(user_info.info);
+                                                match live_status {
+                                                    LiveStatus::Live => {
+                                                        if !room_settings.auto_record {
+                                                            return;
+                                                        }
 
-                                                        match live_status {
-                                                            LiveStatus::Live => {
-                                                                if !room_settings.auto_record {
-                                                                    return;
-                                                                }
+                                                        if room_state.downloader.is_some()
+                                                            && room_state
+                                                                .downloader
+                                                                .as_ref()
+                                                                .unwrap()
+                                                                .is_running()
+                                                        {
+                                                            return;
+                                                        }
 
-                                                                if room_state.downloader.is_some()
-                                                                    && room_state
-                                                                        .downloader
-                                                                        .as_ref()
-                                                                        .unwrap()
-                                                                        .is_running()
-                                                                {
-                                                                    return;
-                                                                }
-
-                                                                let record_dir = room_settings.record_dir.clone().unwrap_or_default();
-                                                                match room_state.downloader.clone() {
-                                                                    Some(downloader) => {
-                                                                        cx.spawn(async move |cx| {
-                                                                            match downloader
-                                                                                .start(cx, &record_dir)
-                                                                                .await
-                                                                            {
-                                                                                Ok(_) => {
-                                                                                    // 下载成功完成，状态会通过事件回调自动更新
-                                                                                }
-                                                                                Err(e) => {
-                                                                                    // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
-                                                                                    eprintln!("下载器启动失败: {e}");
-                                                                                }
-                                                                            }
-                                                                        }).detach();
-                                                                    }
-                                                                    None => {
-                                                                        let room_info = room_state.room_info.clone().unwrap_or_default();
-                                                                        let user_info = room_state.user_info.clone().unwrap_or_default();
-                                                                        let client = client.clone();
-                                                                        let setting = room_settings.clone();
-
-                                                                        let downloader = Arc::new(BLiveDownloader::new(
-                                                                            room_info,
-                                                                            user_info,
-                                                                            setting.quality.unwrap_or_default(),
-                                                                            setting.format.unwrap_or_default(),
-                                                                            setting.codec.unwrap_or_default(),
-                                                                            setting.strategy.unwrap_or_default(),
-                                                                            client,
-                                                                            room_id,
-                                                                        ));
-
-                                                                        room_state.downloader = Some(downloader.clone());
-
-                                                                        cx.spawn(async move |cx| {
-                                                                            match downloader
-                                                                                .start(cx, &setting.record_dir.unwrap_or_default())
-                                                                                .await
-                                                                            {
-                                                                                Ok(_) => {
-                                                                                    // 下载成功完成，状态会通过事件回调自动更新
-                                                                                }
-                                                                                Err(e) => {
-                                                                                    // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
-                                                                                    eprintln!("下载器启动失败: {e}");
-                                                                                }
-                                                                            }
-                                                                        })
-                                                                        .detach();
-                                                                    }
-                                                                }
-
-                                                                room_state.reconnecting = false;
-                                                            }
-                                                            LiveStatus::Offline | LiveStatus::Carousel => {
-                                                                if room_state.downloader.is_some() {
-                                                                    if let Some(downloader) =
-                                                                        room_state.downloader.take()
+                                                        let record_dir = room_settings.record_dir.clone().unwrap_or_default();
+                                                        match room_state.downloader.clone() {
+                                                            Some(downloader) => {
+                                                                cx.spawn(async move |cx| {
+                                                                    match downloader
+                                                                        .start(cx, &record_dir)
+                                                                        .await
                                                                     {
-                                                                        cx.foreground_executor()
-                                                                            .spawn(async move {
-                                                                                downloader.stop().await;
-                                                                            })
-                                                                            .detach();
-
-                                                                        room_state.downloader = None;
+                                                                        Ok(_) => {
+                                                                            // 下载成功完成，状态会通过事件回调自动更新
+                                                                        }
+                                                                        Err(e) => {
+                                                                            // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
+                                                                            eprintln!("下载器启动失败: {e}");
+                                                                        }
                                                                     }
-                                                                }
+                                                                }).detach();
+                                                            }
+                                                            None => {
+                                                                let room_info = room_state.room_info.clone().unwrap_or_default();
+                                                                let user_info = room_state.user_info.clone().unwrap_or_default();
+                                                                let client = client.clone();
+                                                                let setting = room_settings.clone();
+
+                                                                let downloader = Arc::new(BLiveDownloader::new(
+                                                                    room_info,
+                                                                    user_info,
+                                                                    setting.quality.unwrap_or_default(),
+                                                                    setting.format.unwrap_or_default(),
+                                                                    setting.codec.unwrap_or_default(),
+                                                                    setting.strategy.unwrap_or_default(),
+                                                                    client,
+                                                                    room_id,
+                                                                ));
+
+                                                                room_state.downloader = Some(downloader.clone());
+
+                                                                cx.spawn(async move |cx| {
+                                                                    match downloader
+                                                                        .start(cx, &setting.record_dir.unwrap_or_default())
+                                                                        .await
+                                                                    {
+                                                                        Ok(_) => {
+                                                                            // 下载成功完成，状态会通过事件回调自动更新
+                                                                        }
+                                                                        Err(e) => {
+                                                                            // 错误也会通过事件回调处理，但这里我们可以做额外的日志记录
+                                                                            eprintln!("下载器启动失败: {e}");
+                                                                        }
+                                                                    }
+                                                                })
+                                                                .detach();
                                                             }
                                                         }
 
-                                                        if room_state.reconnecting {
-                                                            if room_state.reconnect_manager.should_reconnect() {
-                                                                let delay = room_state.reconnect_manager.calculate_delay();
-                                                                let record_dir = room_settings.record_dir.clone().unwrap_or_default();
-
-                                                                if let Some(downloader) = room_state.downloader.clone() {
-                                                                    cx.spawn(async move |cx| {
-                                                                        cx.background_executor().timer(delay).await;
-                                                                        let _ = downloader.restart(cx, &record_dir).await;
+                                                        room_state.reconnecting = false;
+                                                    }
+                                                    LiveStatus::Offline | LiveStatus::Carousel => {
+                                                        if room_state.downloader.is_some() {
+                                                            if let Some(downloader) =
+                                                                room_state.downloader.take()
+                                                            {
+                                                                cx.foreground_executor()
+                                                                    .spawn(async move {
+                                                                        downloader.stop().await;
                                                                     })
                                                                     .detach();
-                                                                }
 
-                                                                room_state.reconnect_manager.increment_attempt();
-                                                                room_state.reconnecting = false;
+                                                                room_state.downloader = None;
                                                             }
                                                         }
-
-                                                        if let Some(entity) = room_state.entity.clone() {
-                                                            cx.notify(entity.entity_id());
-                                                        }
                                                     }
-                                                });
-                                            }
-                                            (Ok(room_info), Err(_)) => {
-                                                let _ = cx.update_global(|state: &mut AppState, cx| {
-                                                    if let Some(room_state) =
-                                                        state.get_room_state_mut(room_id)
-                                                    {
-                                                        room_state.room_info = Some(room_info);
+                                                }
 
-                                                        if let Some(entity) = room_state.entity.clone() {
-                                                            cx.notify(entity.entity_id());
-                                                        }
-                                                    }
-                                                });
-                                            }
-                                            (Err(_), Ok(user_info)) => {
-                                                let _ = cx.update_global(|state: &mut AppState, cx| {
-                                                    if let Some(room_state) =
-                                                        state.get_room_state_mut(room_id)
-                                                    {
-                                                        room_state.user_info = Some(user_info.info);
+                                                if room_state.reconnecting {
+                                                    if room_state.reconnect_manager.should_reconnect() {
+                                                        let delay = room_state.reconnect_manager.calculate_delay();
+                                                        let record_dir = room_settings.record_dir.clone().unwrap_or_default();
 
-                                                        if let Some(entity) = room_state.entity.clone() {
-                                                            cx.notify(entity.entity_id());
+                                                        if let Some(downloader) = room_state.downloader.clone() {
+                                                            cx.spawn(async move |cx| {
+                                                                cx.background_executor().timer(delay).await;
+                                                                let _ = downloader.restart(cx, &record_dir).await;
+                                                            })
+                                                            .detach();
                                                         }
+
+                                                        room_state.reconnect_manager.increment_attempt();
+                                                        room_state.reconnecting = false;
                                                     }
-                                                });
-                                            }
-                                            (Err(_), Err(_)) => {
-                                                // nothing
-                                            }
+                                                }
+
+                                                if let Some(entity) = room_state.entity.clone() {
+                                                        cx.notify(entity.entity_id());
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    (Ok(room_info), Err(_)) => {
+                                            let _ = cx.update_global(|state: &mut AppState, cx| {
+                                                if let Some(room_state) =
+                                                    state.get_room_state_mut(room_id)
+                                                {
+                                                    room_state.room_info = Some(room_info);
+
+                                                    if let Some(entity) = room_state.entity.clone() {
+                                                        cx.notify(entity.entity_id());
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    (Err(_), Ok(user_info)) => {
+                                            let _ = cx.update_global(|state: &mut AppState, cx| {
+                                                if let Some(room_state) =
+                                                    state.get_room_state_mut(room_id)
+                                                {
+                                                    room_state.user_info = Some(user_info.info);
+
+                                                    if let Some(entity) = room_state.entity.clone() {
+                                                        cx.notify(entity.entity_id());
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    (Err(_), Err(_)) => {
+                                            // nothing
+                                        }
                                 }
 
                                 cx.background_executor()

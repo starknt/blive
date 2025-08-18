@@ -99,7 +99,7 @@ impl AppState {
         log_user_action("初始化应用状态", None);
 
         let client = HttpClient::new(cx.http_client());
-        let mut global_settings = GlobalSettings::load();
+        let global_settings = GlobalSettings::load();
 
         log_config_change("录制目录", &global_settings.record_dir);
         log_config_change("默认录制质量", &format!("{}", global_settings.quality));
@@ -113,10 +113,10 @@ impl AppState {
                 Some(&format!("共{}个房间", global_settings.rooms.len())),
             );
 
-            let settings = global_settings.clone();
-            for room_settings in global_settings.rooms.iter_mut() {
-                *room_settings = room_settings.merge_global(&settings)
-            }
+            // let settings = global_settings.clone();
+            // for room_settings in global_settings.rooms.iter_mut() {
+            //     *room_settings = room_settings.merge_global(&settings)
+            // }
         }
 
         let state = Self {

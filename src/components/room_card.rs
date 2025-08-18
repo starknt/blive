@@ -30,7 +30,6 @@ use std::{path::Path, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub enum RoomCardEvent {
-    LiveStatusChanged(LiveStatus),
     StartRecording(bool),
     StopRecording(bool),
     WillDeleted(u64),
@@ -184,18 +183,6 @@ impl RoomCard {
             .get_room_state(self.settings.room_id)
             .cloned()
     }
-
-    // 更新全局状态中的房间状态
-    fn update_room_state<F>(&self, cx: &mut App, updater: F)
-    where
-        F: FnOnce(&mut RoomCardState),
-    {
-        cx.update_global(|state: &mut AppState, _| {
-            if let Some(room_state) = state.get_room_state_mut(self.settings.room_id) {
-                updater(room_state);
-            }
-        });
-    }
 }
 
 impl RoomCard {
@@ -241,35 +228,29 @@ impl RoomCard {
         cx: &mut Context<Self>,
     ) {
         match event {
-            RoomCardEvent::LiveStatusChanged(status) => {
-                match status {
-                    LiveStatus::Live => {
-                        cx.emit(RoomCardEvent::StartRecording(false));
-                    }
-                    LiveStatus::Carousel | LiveStatus::Offline => {
-                        cx.emit(RoomCardEvent::StopRecording(false))
-                    }
-                }
-
-                cx.notify();
-            }
             RoomCardEvent::StartRecording(user_action) => {
                 if *user_action {
-                    self.update_room_state(cx, |state| {
-                        state.user_stop = false;
+                    let room_id = self.settings.room_id;
+                    cx.update_global(|state: &mut AppState, _| {
+                        if let Some(settings) = state.get_room_settings_mut(room_id) {
+                            settings.auto_record = true;
+                        }
                     });
                 }
                 cx.notify();
             }
             RoomCardEvent::StopRecording(user_action) => {
-                self.update_room_state(cx, |state| {
-                    state.user_stop = *user_action;
-                    state.status = RoomCardStatus::WaitLiveStreaming;
-                });
+                let room_id = self.settings.room_id;
+
+                if *user_action {
+                    cx.update_global(|state: &mut AppState, _| {
+                        if let Some(settings) = state.get_room_settings_mut(room_id) {
+                            settings.auto_record = false;
+                        }
+                    });
+                }
 
                 if let Some(downloader) = self.downloader.take() {
-                    let room_id = self.settings.room_id;
-
                     cx.foreground_executor()
                         .spawn(async move {
                             downloader.stop().await;
@@ -449,7 +430,7 @@ impl Render for RoomCard {
         let room_info = room_info.clone().unwrap_or_default();
         let user_info = user_info.clone().unwrap_or_default();
 
-        let live_time = room_info.live_time.split(" ").next().unwrap_or_default();
+        let live_time = room_info.live_time.rsplit(" ").next().unwrap_or_default();
 
         div()
             .rounded_lg()

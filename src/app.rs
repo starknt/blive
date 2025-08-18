@@ -145,7 +145,7 @@ impl BLiveApp {
 
                                                         match live_status {
                                                             LiveStatus::Live => {
-                                                                if room_state.user_stop {
+                                                                if !room_settings.auto_record {
                                                                     return;
                                                                 }
 

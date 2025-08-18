@@ -413,6 +413,8 @@ impl Default for GlobalSettings {
 pub struct RoomSettings {
     /// 房间号
     pub room_id: u64,
+    /// 自动开启录制
+    pub auto_record: bool,
     /// 录制目录
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub record_dir: Option<String>,
@@ -436,6 +438,7 @@ impl RoomSettings {
     pub fn new(room_id: u64) -> Self {
         Self {
             room_id,
+            auto_record: true,
             record_dir: None,
             strategy: None,
             quality: None,
@@ -448,6 +451,7 @@ impl RoomSettings {
     pub fn merge_global(&mut self, global_settings: &GlobalSettings) -> Self {
         Self {
             room_id: self.room_id,
+            auto_record: self.auto_record,
             strategy: Some(self.strategy.unwrap_or(global_settings.strategy)),
             quality: Some(self.quality.unwrap_or(global_settings.quality)),
             format: Some(self.format.unwrap_or(global_settings.format)),
@@ -727,6 +731,7 @@ mod tests {
             record_dir: "/test/path".to_string(),
             rooms: vec![RoomSettings {
                 room_id: 67890,
+                auto_record: true,
                 record_dir: None,
                 strategy: None,
                 quality: None,
@@ -812,6 +817,7 @@ mod tests {
         let mut invalid_settings = GlobalSettings::default();
         invalid_settings.rooms.push(RoomSettings {
             room_id: 12345,
+            auto_record: true,
             record_dir: None,
             strategy: None,
             quality: None,

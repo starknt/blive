@@ -7,7 +7,7 @@ use gpui_component::{
     h_flex,
     input::{InputState, TextInput},
     notification::Notification,
-    text::Text,
+    switch::Switch,
     v_flex,
 };
 
@@ -198,35 +198,44 @@ impl Render for RoomSettingsModal {
                         .child(
                             v_flex()
                                 .gap_y_2()
-                                .child(Text::String("录制文件名".into()))
+                                .font_bold()
+                                .child("录制文件名")
                                 .child(TextInput::new(&self.record_name_input)),
+                        )
+                        .child(
+                            h_flex().font_bold().gap_4().child("自动录制").child(
+                                Switch::new("auto_recording")
+                                    .checked(self.settings.auto_record)
+                                    .tooltip("当开播时将会自动进行录制")
+                                    .max_w_32(),
+                            ),
                         )
                         .child(
                             v_flex()
                                 .font_bold()
                                 .gap_2()
-                                .child(Text::String("录制策略".into()))
+                                .child("录制策略")
                                 .child(Dropdown::new(&self.strategy_input).max_w_32()),
                         )
                         .child(
                             v_flex()
                                 .font_bold()
                                 .gap_2()
-                                .child(Text::String("录制质量".into()))
+                                .child("录制质量")
                                 .child(Dropdown::new(&self.quality_input).max_w_32()),
                         )
                         .child(
                             v_flex()
                                 .font_bold()
                                 .gap_2()
-                                .child(Text::String("录制格式".into()))
+                                .child("录制格式")
                                 .child(Dropdown::new(&self.format_input).max_w_32()),
                         )
                         .child(
                             v_flex()
                                 .font_bold()
                                 .gap_2()
-                                .child(Text::String("录制编码".into()))
+                                .child("录制编码")
                                 .child(Dropdown::new(&self.codec_input).max_w_32()),
                         ),
                 ),

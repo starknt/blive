@@ -14,7 +14,6 @@ use std::time::Duration;
 pub struct RoomCardState {
     pub room_id: u64,
     pub status: RoomCardStatus,
-    pub user_stop: bool,
     pub(crate) room_info: Option<LiveRoomInfoData>,
     pub(crate) user_info: Option<LiveUserInfo>,
     pub downloader: Option<Arc<BLiveDownloader>>,
@@ -77,7 +76,6 @@ impl RoomCardState {
             entity: None,
             room_info: None,
             user_info: None,
-            user_stop: false,
             downloader: None,
             downloader_status: None,
             reconnecting: false,
@@ -154,6 +152,13 @@ impl AppState {
         self.settings
             .rooms
             .iter()
+            .find(|settings| settings.room_id == room_id)
+    }
+
+    pub fn get_room_settings_mut(&mut self, room_id: u64) -> Option<&mut RoomSettings> {
+        self.settings
+            .rooms
+            .iter_mut()
             .find(|settings| settings.room_id == room_id)
     }
 

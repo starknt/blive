@@ -1,7 +1,10 @@
 use std::borrow::Cow;
 
+use crate::settings::Quality;
+
 pub struct DownloaderFilenameTemplate {
     pub up_name: String,
+    pub quality: Quality,
     pub room_id: u64,
     pub room_title: String,
     pub room_description: String,
@@ -14,6 +17,7 @@ impl leon::Values for DownloaderFilenameTemplate {
     fn get_value(&self, key: &str) -> Option<Cow<'_, str>> {
         match key {
             "up_name" => Some(Cow::Borrowed(&self.up_name)),
+            "quality" => Some(Cow::Owned(self.quality.to_string())),
             "room_id" => Some(Cow::Owned(self.room_id.to_string())),
             "datetime" => Some(Cow::Borrowed(&self.datetime)),
             "room_title" => Some(Cow::Owned(

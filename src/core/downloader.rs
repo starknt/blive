@@ -361,6 +361,7 @@ impl BLiveDownloader {
     fn generate_filename(&self) -> Result<String> {
         let room_info = &self.context.room_info;
         let user_info = &self.context.user_info;
+        let quality = self.context.quality;
 
         let template = leon::Template::parse(DEFAULT_RECORD_NAME)
             .unwrap_or_else(|_| leon::Template::parse("{up_name}_{datetime}").unwrap());
@@ -371,6 +372,7 @@ impl BLiveDownloader {
 
         let values = DownloaderFilenameTemplate {
             up_name: user_info.uname.clone(),
+            quality,
             room_id: room_info.room_id,
             datetime: live_time.format("%Y-%m-%d %H点%M分").to_string(),
             room_title: room_info.title.clone(),

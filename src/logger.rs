@@ -15,7 +15,12 @@ impl FormatTime for SystemTime {
 
 /// 全局日志管理器实例
 static GLOBAL_LOGGER: LazyLock<RwLock<LoggerManager>> = LazyLock::new(|| {
-    let logger = LoggerManager::new(Level::INFO).expect("无法创建全局日志管理器");
+    let logger = LoggerManager::new(if cfg!(debug_assertions) {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    })
+    .expect("无法创建全局日志管理器");
     RwLock::new(logger)
 });
 

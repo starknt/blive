@@ -1,17 +1,19 @@
-use crate::core::downloader::context::DownloaderEvent;
 use crate::core::downloader::{
     DownloadConfig, Downloader, DownloaderContext, DownloaderError, REFERER, USER_AGENT,
+    context::DownloaderEvent,
 };
 use crate::settings::{Strategy, StreamCodec};
 use anyhow::{Context, Result};
-use futures::AsyncReadExt;
-use futures::channel::oneshot;
-use gpui::AsyncApp;
-use gpui::http_client::{AsyncBody, Method, Request};
-use std::io::Write;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::time::Instant;
+use futures::{AsyncReadExt, channel::oneshot};
+use gpui::{
+    AsyncApp,
+    http_client::{AsyncBody, Method, Request},
+};
+use std::{
+    io::Write,
+    sync::{Arc, atomic::AtomicBool},
+    time::Instant,
+};
 
 #[derive(Debug)]
 pub struct HttpStreamDownloader {

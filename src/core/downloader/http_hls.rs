@@ -1,14 +1,15 @@
-use crate::core::downloader::context::DownloaderEvent;
 use crate::core::downloader::{
     DownloadConfig, Downloader, DownloaderContext, DownloaderError, REFERER, USER_AGENT,
+    context::DownloaderEvent,
 };
 use crate::settings::StreamCodec;
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::AsyncApp;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::time::Instant;
+use std::{
+    sync::{Arc, atomic::AtomicBool},
+    time::Instant,
+};
 
 #[derive(Debug)]
 pub struct HttpHlsDownloader {

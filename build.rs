@@ -7,6 +7,16 @@ use std::process::Command;
 
 #[cfg(feature = "ffmpeg")]
 fn download_ffmpeg() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(debug_assertions)]
+    {
+        use ffmpeg_sidecar::command::ffmpeg_is_installed;
+
+        if ffmpeg_is_installed() {
+            println!("FFmpeg is already installed, skip download");
+            return Ok(());
+        }
+    }
+
     // Checking the version number before downloading is actually not necessary,
     // but it's a good way to check that the download URL is correct.
     match check_latest_version() {

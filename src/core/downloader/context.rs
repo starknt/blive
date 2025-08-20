@@ -14,7 +14,7 @@ use crate::{
         downloader::{
             DownloadStats,
             error::DownloaderError,
-            utils::{self, pretty_bytes, pretty_duration},
+            utils::{pretty_bytes, pretty_duration},
         },
         http_client::{room::LiveRoomInfoData, user::LiveUserInfo},
     },
@@ -276,11 +276,11 @@ impl DownloaderContext {
                 duration_ms,
             } => {
                 tracing::debug!(
-                    "录制进度 - 房间: {}, 已下载: {:.2}MB, 速度: {:.1}kb/s, 时长: {}",
+                    "录制进度 - 房间: {}, 已下载: {:.2}MB, 速度: {:.1}KB/s, 时长: {}",
                     self.room_info.room_id,
-                    utils::pretty_bytes(*bytes_downloaded),
+                    pretty_bytes(*bytes_downloaded),
                     *download_speed_kbps,
-                    duration_ms / 1000
+                    pretty_duration(*duration_ms / 1000)
                 );
             }
             DownloaderEvent::Error { error } => {
@@ -304,7 +304,7 @@ impl DownloaderContext {
                 log_recording_stop(self.room_info.room_id);
 
                 tracing::info!(
-                    "录制完成 - 房间: {}, 文件: {}, 大小: {:.2}MB, 时长: {}秒",
+                    "录制完成 - 房间: {}, 文件: {}, 大小: {:.2}MB, 时长: {}",
                     self.room_info.room_id,
                     file_path,
                     pretty_bytes(*file_size),

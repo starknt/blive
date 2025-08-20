@@ -2,6 +2,7 @@ use crate::error::{AppError, AppResult};
 use chrono::Local;
 use std::sync::{LazyLock, RwLock};
 use tracing::Level;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::{FmtSubscriber, fmt::format::FmtSpan};
 
@@ -51,7 +52,12 @@ impl LoggerManager {
             .with_thread_ids(true)
             .with_thread_names(true)
             .with_span_events(FmtSpan::CLOSE)
-            .with_max_level(self.log_level);
+            .with_max_level(self.log_level)
+            .with_env_filter(
+                EnvFilter::from_default_env()
+                    .add_directive("blive=debug".parse().unwrap())
+                    .add_directive("reqwest=debug".parse().unwrap()),
+            );
 
         let subscriber = builder.finish();
         tracing::subscriber::set_global_default(subscriber)

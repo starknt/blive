@@ -165,11 +165,15 @@ impl Downloader for HttpStreamDownloader {
                                                         last_report_bytes = bytes_downloaded;
                                                     }
 
-                                                    context.push_event(DownloaderEvent::Progress {
-                                                        bytes_downloaded,
-                                                        download_speed_kbps,
-                                                        duration_ms,
-                                                    });
+                                                    if elapsed > 1.0 {
+                                                        context.push_event(
+                                                            DownloaderEvent::Progress {
+                                                                bytes_downloaded,
+                                                                download_speed_kbps,
+                                                                duration_ms,
+                                                            },
+                                                        );
+                                                    }
                                                 }
                                                 Err(e) => {
                                                     context.push_event(DownloaderEvent::Error {

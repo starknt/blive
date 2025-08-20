@@ -276,7 +276,7 @@ impl DownloaderContext {
                 duration_ms,
             } => {
                 tracing::debug!(
-                    "录制进度 - 房间: {}, 已下载: {:.2}MB, 速度: {:.1}KB/s, 时长: {}",
+                    "录制进度 - 房间: {}, 已下载: {}, 速度: {:.1}KB/s, 时长: {}",
                     self.room_info.room_id,
                     pretty_bytes(*bytes_downloaded),
                     *download_speed_kbps,

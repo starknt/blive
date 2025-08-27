@@ -9,15 +9,23 @@ pub struct SystemTray {
     tray: TrayItem,
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const ICON: &[u8] = include_bytes!("../resources/mac/icon.png");
+
+#[cfg(target_os = "linux")]
+const ICON: &[u8] = include_bytes!("../resources/icons/png/32x32.png");
 
 #[cfg(not(windows))]
 fn load_icon_rgba(icon: &[u8]) -> IconSource {
+    let decoder_red = png::Decoder::new(icon);
+    let (info_red, mut reader_red) = decoder_red.read_info().unwrap();
+    let mut buf_red = vec![0; info_red.buffer_size()];
+    reader_red.next_frame(&mut buf_red).unwrap();
+
     IconSource::Data {
-        width: 0,
-        height: 0,
-        data: icon.to_vec(),
+        data: buf_red,
+        height: 32,
+        width: 32,
     }
 }
 

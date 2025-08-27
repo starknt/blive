@@ -43,6 +43,8 @@ impl SystemTray {
         tray.inner_mut().add_label("BLive 录制").unwrap();
         #[cfg(target_os = "windows")]
         tray.inner_mut().set_tooltip("BLive 录制").unwrap();
+        #[cfg(target_os = "linux")]
+        tray.inner_mut().add_label("BLive 录制").unwrap();
 
         Self { tray }
     }
